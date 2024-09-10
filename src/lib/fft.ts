@@ -11,14 +11,18 @@ export const binSizeHzAtom = atom(
   (get) => get(sampleRateAtom) / get(binSizeAtom)
 );
 
+export const heightFactor = atom((get) => {
+  return get(fftSizeAtom) / 546.1333333333;
+});
+
 export const timeseriesCanvasWidthAtom = atom((get) => get(fftSizeAtom) / 4);
 export const timeseriesCanvasHeightAtom = atom((get) =>
-  Math.floor(get(fftSizeAtom) / 12)
+  Math.floor(get(fftSizeAtom) / get(heightFactor))
 );
 
 export const liveCanvasWidthAtom = atom(256 + 16);
 export const liveCanvasHeightAtom = atom((get) =>
-  Math.floor(get(fftSizeAtom) / 12)
+  Math.floor(get(fftSizeAtom) / get(heightFactor))
 );
 
 // nyquist frequency

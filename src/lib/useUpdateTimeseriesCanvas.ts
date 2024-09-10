@@ -17,9 +17,10 @@ export function useUpdateTimeseriesCanvas() {
   const setFrequencyMarkers = useSetAtom(frequencyMarkersAtom);
 
   return useCallback(
-    (canvas: HTMLCanvasElement, hzData: IProcessedAudioDataArray) => {
+    async (canvas: HTMLCanvasElement, hzData: IProcessedAudioDataArray) => {
       const ctx = canvas.getContext("2d", {
         willReadFrequently: true,
+        alpha: false,
       });
       if (!ctx) return;
 
