@@ -26,7 +26,11 @@ export default function FFTSizeSelection() {
   const [sampleRate, setSampleRate] = useAtom(fftSizeAtom);
 
   return (
-    <AnalysisSquareWrapper label="FFT Size">
+    <AnalysisSquareWrapper
+      label="FFT Size"
+      tooltip="The window size, in samples, that is used when performing a Fast Fourier Transform."
+      tooltipLink="https://en.wikipedia.org/wiki/Fast_Fourier_transform"
+    >
       <div className="grid h-full grid-cols-2 pt-1 font-mono place-items-center">
         {FFT_SIZE_OPTIONS.map((option) => (
           <Button
