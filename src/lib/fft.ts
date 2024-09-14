@@ -18,7 +18,7 @@ export const heightFactor = atom((get) => {
 
 export const TIMESERIES_CANVAS_WIDTHS = {
   DESKTOP: 2048,
-  MOBILE: 1024,
+  MOBILE: 768,
 };
 
 export const timeseriesCanvasWidthAtom = atom(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
