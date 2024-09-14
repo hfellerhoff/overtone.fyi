@@ -70,6 +70,7 @@ function getPitch(overtones: OvertoneBucket[]) {
     previousPitch = overtone.hz;
   }
 
+  // If can't find by overtones, just use the loudest pitch
   let pitchWeight = 0;
   if (!!previousPitch && pitch === 0) {
     overtones.forEach((overtone) => {
