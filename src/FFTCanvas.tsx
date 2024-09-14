@@ -1,6 +1,6 @@
 import { useAtom } from "jotai";
 import { MicIcon, MicOffIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import AnalysisInfo from "./components/AnalysisInfo";
 import FrequencyMarkers from "./components/FrequencyMarkers";
 import {
@@ -125,7 +125,13 @@ export default function FFTCanvas() {
 
   const hasAutoSetFFTSize = useRef(false);
 
+  const [hasMounted, setHasMounted] = useState(false);
   useEffect(() => {
+    if (!hasMounted) {
+      setHasMounted(true);
+      return;
+    }
+
     if (isMobile) {
       if (timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.DESKTOP) {
         setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.MOBILE);
@@ -149,6 +155,7 @@ export default function FFTCanvas() {
     }
   }, [
     hasAutoSetFFTSize,
+    hasMounted,
     isMobile,
     setFFTSize,
     setTimeseriesCanvasWidth,
