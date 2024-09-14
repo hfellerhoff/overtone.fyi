@@ -177,7 +177,7 @@ export default function FFTCanvas() {
       }}
     >
       <div
-        className="flex items-center gap-2 pt-4 overflow-x-auto"
+        className="flex items-center gap-2 pt-4 overflow-x-auto overflow-y-hidden"
         style={{
           height: TOP_BAR_HEIGHT,
         }}
