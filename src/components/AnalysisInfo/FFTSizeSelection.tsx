@@ -34,6 +34,7 @@ export default function FFTSizeSelection() {
       <div className="grid h-full grid-cols-2 pt-1 font-mono place-items-center">
         {FFT_SIZE_OPTIONS.map((option) => (
           <Button
+            key={option.value}
             size="sm"
             variant={sampleRate === option.value ? "secondary" : "ghost"}
             onClick={() => {

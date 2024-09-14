@@ -33,7 +33,7 @@ export default function FFTCanvas() {
   const [isRecording, setIsRecording] = useAtom(isRecordingAtom);
 
   const [sampleRate] = useAtom(sampleRateAtom);
-  const [fftSize] = useAtom(fftSizeAtom);
+  const [fftSize, setFFTSize] = useAtom(fftSizeAtom);
   const [timeseriesCanvasWidth, setTimeseriesCanvasWidth] = useAtom(
     timeseriesCanvasWidthAtom
   );
@@ -123,21 +123,37 @@ export default function FFTCanvas() {
   const isTablet = useMediaQuery("(max-width: 800px)");
   const isMobile = useMediaQuery("(max-width: 600px)");
 
+  const hasAutoSetFFTSize = useRef(false);
+
   useEffect(() => {
-    if (
-      isMobile &&
-      timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.DESKTOP
-    ) {
-      setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.MOBILE);
+    if (isMobile) {
+      if (timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.DESKTOP) {
+        setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.MOBILE);
+      }
+
+      if (!hasAutoSetFFTSize.current) {
+        setFFTSize(4096);
+        hasAutoSetFFTSize.current = true;
+      }
     }
 
-    if (
-      !isMobile &&
-      timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.MOBILE
-    ) {
-      setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
+    if (!isMobile) {
+      if (timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.MOBILE) {
+        setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
+      }
+
+      if (!hasAutoSetFFTSize.current) {
+        setFFTSize(8192);
+        hasAutoSetFFTSize.current = true;
+      }
     }
-  });
+  }, [
+    hasAutoSetFFTSize,
+    isMobile,
+    setFFTSize,
+    setTimeseriesCanvasWidth,
+    timeseriesCanvasWidth,
+  ]);
 
   let liveCanvasWidthPx = liveCanvasWidth * 2;
   if (isMobile) {
