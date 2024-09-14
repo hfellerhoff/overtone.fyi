@@ -6,7 +6,7 @@ export const analyzerAtom = atom<AnalyserNode | null>(null);
 export const isRecordingAtom = atom(true);
 
 export const sampleRateAtom = atom(48000);
-export const fftSizeAtom = atom(32768);
+export const fftSizeAtom = atom(8192);
 export const binSizeAtom = atom((get) => get(fftSizeAtom) * 2);
 export const binSizeHzAtom = atom(
   (get) => get(sampleRateAtom) / get(binSizeAtom)

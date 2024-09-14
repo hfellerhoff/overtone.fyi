@@ -1,14 +1,16 @@
 import { useMemo } from "react";
-import type { OvertoneBucket } from "./AnalysisInfo";
+import type { OvertoneBucket } from ".";
 import { pitches } from "./pitches";
+import AnalysisSquareWrapper from "./AnalysisSquareWrapper";
 
-const PITCH_SENSITIVITY = 0.8;
+const PITCH_SENSITIVITY = 0.7;
 
 type PitchAndLabel = [hz: number, label: string];
 
 const entries = Object.entries(pitches)
   .map((entry) => [parseFloat(entry[0]), entry[1]] as PitchAndLabel)
   .sort((a, b) => (a[0] < b[0] ? -1 : 1));
+
 function findPitchLabel(value: number) {
   let lowerValue: PitchAndLabel = [0, ""];
   let higherValue: PitchAndLabel = [0, ""];
@@ -19,11 +21,16 @@ function findPitchLabel(value: number) {
 
   while (entry[0] < value) {
     lowerValue = entry;
+
+    if (!entries?.[i + 1]) {
+      break;
+    }
+
     i += 1;
-    entry = entries[i];
+    entry = entries?.[i];
   }
 
-  higherValue = entries[i + 1];
+  higherValue = entries?.[i + 1] ?? entries[i];
 
   const lowerDiff = value - lowerValue[0];
   const higherDiff = higherValue[0] - value;
@@ -79,13 +86,20 @@ export default function PitchDisplay({ overtoneBuckets }: IPitchDisplayProps) {
   const diffToTarget = pitch.targetValue - pitch.value;
   const prefix = diffToTarget < 0 ? "-" : "+";
 
+  const roundedPitch = Math.round(pitch.value * 100) / 100;
+
   return (
-    <div className="grid h-full border rounded-md shadow-sm place-items-center aspect-square border-input bg-background">
-      <div>{pitch.label}</div>
-      <div className="font-mono">
-        {prefix}
-        {Math.abs(diffToTarget).toPrecision(4)}
-      </div>
-    </div>
+    <AnalysisSquareWrapper label="Pitch">
+      <>
+        <div className="font-mono">{pitch.label || "-"}</div>
+        <div className="font-mono text-sm text-neutral-300">
+          {roundedPitch}hz
+        </div>
+        <div className="font-mono text-sm text-neutral-500">
+          {prefix}
+          {Math.abs(diffToTarget).toPrecision(3)}hz
+        </div>
+      </>
+    </AnalysisSquareWrapper>
   );
 }
