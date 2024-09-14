@@ -70,8 +70,14 @@ function getPitch(overtones: OvertoneBucket[]) {
     previousPitch = overtone.hz;
   }
 
+  let pitchWeight = 0;
   if (!!previousPitch && pitch === 0) {
-    pitch = previousPitch * 2;
+    overtones.forEach((overtone) => {
+      if (overtone.weight > pitchWeight) {
+        pitch = overtone.hz;
+        pitchWeight = overtone.weight;
+      }
+    });
   }
 
   return findPitchLabel(pitch);
