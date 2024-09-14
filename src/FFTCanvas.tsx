@@ -120,6 +120,7 @@ export default function FFTCanvas() {
     updateTimeseriesCanvas,
   ]);
 
+  const isTablet = useMediaQuery("(max-width: 800px)");
   const isMobile = useMediaQuery("(max-width: 600px)");
 
   useEffect(() => {
@@ -137,6 +138,13 @@ export default function FFTCanvas() {
       setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
     }
   });
+
+  let liveCanvasWidthPx = liveCanvasWidth * 2;
+  if (isMobile) {
+    liveCanvasWidthPx = liveCanvasWidth;
+  } else if (isTablet) {
+    liveCanvasWidthPx = liveCanvasWidth * 1.5;
+  }
 
   return (
     <div
@@ -176,7 +184,7 @@ export default function FFTCanvas() {
         <div
           className="relative h-full overflow-hidden"
           style={{
-            width: isMobile ? liveCanvasWidth : liveCanvasWidth * 2,
+            width: liveCanvasWidthPx,
           }}
         >
           <canvas
