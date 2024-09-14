@@ -14,7 +14,6 @@ import {
 import { useUpdateAudioValues } from "./lib/useUpdateAudioValues";
 import { useUpdateLiveCanvas } from "./lib/useUpdateLiveCanvas";
 import { useUpdateTimeseriesCanvas } from "./lib/useUpdateTimeseriesCanvas";
-import { Button } from "./components/ui/button";
 import { MicIcon, MicOffIcon } from "lucide-react";
 import AnalysisInfo from "./components/AnalysisInfo";
 
