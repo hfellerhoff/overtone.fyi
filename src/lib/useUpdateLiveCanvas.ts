@@ -1,7 +1,7 @@
 import { useAtomValue } from "jotai";
 import { useCallback } from "react";
 import { liveCanvasHeightAtom, liveCanvasWidthAtom } from "./fft";
-import { IProcessedAudioDataArray } from "./useUpdateAudioValues";
+import { IProcessedAudioData } from "./useUpdateAudioValues";
 import { getAudioAmplitudeValueColor } from "./getHzDataElementColor";
 
 export function useUpdateLiveCanvas() {
@@ -9,7 +9,7 @@ export function useUpdateLiveCanvas() {
   const canvasWidth = useAtomValue(liveCanvasWidthAtom);
 
   return useCallback(
-    async (canvas: HTMLCanvasElement, hzData: IProcessedAudioDataArray) => {
+    async (canvas: HTMLCanvasElement, hzData: IProcessedAudioData) => {
       const ctx = canvas.getContext("2d", {
         willReadFrequently: true,
         alpha: false,

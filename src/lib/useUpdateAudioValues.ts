@@ -1,6 +1,7 @@
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback } from "react";
 import {
+  audioDataAnalysisAtom,
   audioDataArrayAtom,
   binSizeHzAtom,
   maxDisplayHzAtom,
@@ -25,14 +26,15 @@ const getLogarithmicPixelSize = (
   return next - curr;
 };
 
-export type IProcessedAudioDataArray = [pixelStart: number, value: number][];
+export type IProcessedAudioDataItem = [pixelStart: number, value: number];
+export type IProcessedAudioData = IProcessedAudioDataItem[];
 
 function getHzDataArray(
   audioDataArray: Uint8Array,
   canvasHeight: number,
   binSizeHz: number,
   maxDisplayHz: number
-): IProcessedAudioDataArray {
+): IProcessedAudioData {
   return Array(canvasHeight)
     .fill(0)
     .map((_, i) => {
@@ -86,6 +88,7 @@ export function useUpdateAudioValues() {
   const audioDataArray = useAtomValue(audioDataArrayAtom);
   const binSizeHz = useAtomValue(binSizeHzAtom);
   const maxDisplayHz = useAtomValue(maxDisplayHzAtom);
+  const setAudioAnalysis = useSetAtom(audioDataAnalysisAtom);
 
   return useCallback(
     (analyzer: AnalyserNode) => {
@@ -98,18 +101,33 @@ export function useUpdateAudioValues() {
         maxDisplayHz
       );
 
-      // const peakVolume = hzDataArray.reduce(
-      //   (max, element) => {
-      //     if (element[1] > max[1]) {
-      //       return element;
-      //     }
-      //     return max;
-      //   },
-      //   [0, 0]
-      // );
+      const highestAmplitudeValues = hzDataArray.reduce(
+        (accValues, element) => {
+          if (accValues.length < 64) {
+            accValues.push(element);
+            return accValues;
+          }
+
+          if (accValues.some((v) => v[1] < element[1])) {
+            accValues.push(element);
+            accValues.sort((a, b) => (a[1] > b[1] ? -1 : 1));
+            accValues.pop();
+          }
+
+          return accValues;
+        },
+        [] as IProcessedAudioDataItem[]
+      );
+
+      // Order by hz
+      highestAmplitudeValues.sort((a, b) => (a[0] < b[0] ? -1 : 1));
+
+      setAudioAnalysis({
+        highestAmplitudeValues,
+      });
 
       return hzDataArray;
     },
-    [audioDataArray, binSizeHz, canvasHeight, maxDisplayHz]
+    [audioDataArray, binSizeHz, canvasHeight, maxDisplayHz, setAudioAnalysis]
   );
 }

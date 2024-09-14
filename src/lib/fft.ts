@@ -1,11 +1,12 @@
 import { atom } from "jotai";
+import { IProcessedAudioDataItem } from "./useUpdateAudioValues";
 
 export const analyzerAtom = atom<AnalyserNode | null>(null);
 
 export const isRecordingAtom = atom(true);
 
 export const sampleRateAtom = atom(48000);
-export const fftSizeAtom = atom(8192);
+export const fftSizeAtom = atom(32768);
 export const binSizeAtom = atom((get) => get(fftSizeAtom) * 2);
 export const binSizeHzAtom = atom(
   (get) => get(sampleRateAtom) / get(binSizeAtom)
@@ -15,7 +16,7 @@ export const heightFactor = atom((get) => {
   return get(fftSizeAtom) / 546.1333333333;
 });
 
-export const timeseriesCanvasWidthAtom = atom((get) => get(fftSizeAtom) / 4);
+export const timeseriesCanvasWidthAtom = atom(2048);
 export const timeseriesCanvasHeightAtom = atom((get) =>
   Math.floor(get(fftSizeAtom) / get(heightFactor))
 );
@@ -34,3 +35,9 @@ export const audioDataArrayAtom = atom(
 
 export const frequencyMarkersAtom = atom<[hz: number, index: number][]>([]);
 export const frequencyMarkerDistanceAtom = atom(25);
+
+export const audioDataAnalysisAtom = atom<{
+  highestAmplitudeValues: IProcessedAudioDataItem[];
+}>({
+  highestAmplitudeValues: [],
+});

@@ -16,6 +16,11 @@ import { useUpdateLiveCanvas } from "./lib/useUpdateLiveCanvas";
 import { useUpdateTimeseriesCanvas } from "./lib/useUpdateTimeseriesCanvas";
 import { Button } from "./components/ui/button";
 import { MicIcon, MicOffIcon } from "lucide-react";
+import AnalysisInfo from "./components/AnalysisInfo";
+
+const TOP_BAR_HEIGHT = 128;
+const VERTICAL_PADDING = 20;
+const CANVAS_HEIGHT = `calc(100vh - ${TOP_BAR_HEIGHT + VERTICAL_PADDING}px)`;
 
 export default function FFTCanvas() {
   const timeSeriesCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -116,24 +121,34 @@ export default function FFTCanvas() {
 
   return (
     <div className="w-screen h-screen p-4 pt-0 bg-neutral-900">
-      <div className="flex items-center h-16 pt-4">
-        <Button
-          size="sm"
-          variant="outline"
+      <div
+        className="flex items-center gap-2 pt-4"
+        style={{
+          height: TOP_BAR_HEIGHT,
+        }}
+      >
+        <button
+          className="grid h-full border rounded-md shadow-sm place-items-center aspect-square border-input bg-background hover:bg-accent hover:text-accent-foreground"
           onClick={() => setIsRecording((prevIsRecording) => !prevIsRecording)}
         >
           {isRecording ? (
-            <span className="flex gap-1">
+            <span className="flex flex-col items-center gap-1">
               <MicOffIcon size={16} /> Stop
             </span>
           ) : (
-            <span className="flex gap-1">
+            <span className="flex flex-col items-center gap-1">
               <MicIcon size={16} /> Start
             </span>
           )}
-        </Button>
+        </button>
+        <AnalysisInfo />
       </div>
-      <main className="flex h-[calc(100vh-80px)]">
+      <main
+        className="flex gap-2 pt-2 overflow-hidden rounded-lg"
+        style={{
+          height: CANVAS_HEIGHT,
+        }}
+      >
         <div
           className="relative h-full overflow-hidden"
           style={{
@@ -153,7 +168,7 @@ export default function FFTCanvas() {
           ))} */}
           <canvas
             ref={liveCanvasRef}
-            className="w-full h-full bg-black rounded-l-lg"
+            className="w-full h-full bg-black border rounded-lg border-input"
             width={liveCanvasWidth}
             height={liveCanvasHeight}
           />
@@ -172,7 +187,7 @@ export default function FFTCanvas() {
           ))}
           <canvas
             ref={timeSeriesCanvasRef}
-            className="w-full h-full bg-black rounded-r-lg"
+            className="w-full h-full bg-black border rounded-lg border-input"
             width={timeseriesCanvasWidth}
             height={timeseriesCanvasHeight}
           />
