@@ -69,8 +69,8 @@
   --adjusted-height: 100vh;
 }
 
-@media screen and (max-height: 600px) {
+@media screen and (max-height: 500px) {
   :root {
-    --adjusted-height: 600px;
+    --adjusted-height: 500px;
   }
 }
