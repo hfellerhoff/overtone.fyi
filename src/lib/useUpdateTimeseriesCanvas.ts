@@ -1,6 +1,7 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback } from "react";
 import {
+  coloringMethodAtom,
   frequencyMarkerDistanceAtom,
   frequencyMarkersAtom,
   timeseriesCanvasHeightAtom,
@@ -13,6 +14,7 @@ export function useUpdateTimeseriesCanvas() {
   const canvasHeight = useAtomValue(timeseriesCanvasHeightAtom);
   const canvasWidth = useAtomValue(timeseriesCanvasWidthAtom);
   const frequencyMarkerDistance = useAtomValue(frequencyMarkerDistanceAtom);
+  const coloringMethod = useAtomValue(coloringMethodAtom);
 
   const setFrequencyMarkers = useSetAtom(frequencyMarkersAtom);
 
@@ -38,13 +40,23 @@ export function useUpdateTimeseriesCanvas() {
           updatedFrequencyMarkers.push([Math.round(startHz), i]);
         }
 
-        ctx.fillStyle = getAudioAmplitudeValueColor(value);
+        ctx.fillStyle = getAudioAmplitudeValueColor(
+          startHz,
+          value,
+          coloringMethod
+        );
         ctx.fillRect(0, canvasHeight - i, 1, 1);
       }
 
       updatedFrequencyMarkers.reverse();
       setFrequencyMarkers(updatedFrequencyMarkers);
     },
-    [canvasHeight, canvasWidth, frequencyMarkerDistance, setFrequencyMarkers]
+    [
+      canvasHeight,
+      canvasWidth,
+      coloringMethod,
+      frequencyMarkerDistance,
+      setFrequencyMarkers,
+    ]
   );
 }

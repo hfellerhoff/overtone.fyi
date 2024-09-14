@@ -1,3 +1,5 @@
+import type { ColoringMethod } from "./fft";
+
 const interpolate = (
   value: number,
   { inputMin = 0, inputMax = 1, outputMin = 0, outputMax = 1 }
@@ -25,11 +27,11 @@ const sigmoid = (x: number) => {
   return numerator / denominator;
 };
 
-export function getAudioAmplitudeValueColor(value: number) {
-  // if (peakVolume[1] > 64 && startHz === peakVolume[0]) {
-  //   console.log(peakVolume);
-  //   return "#FF00AC";
-  // }
+export function getAudioAmplitudeValueColor(
+  _hz: number,
+  value: number,
+  coloring: ColoringMethod = "sigmoid"
+) {
   const colorMax = 255;
   const constainedValue = interpolate(value, {
     inputMin: 0,
@@ -45,10 +47,19 @@ export function getAudioAmplitudeValueColor(value: number) {
     outputMax: 255,
   });
 
-  const adjustedColorValue = sigmoid(colorValue);
-  const color = colorMax - adjustedColorValue;
+  if (coloring === "sigmoid") {
+    const adjustedColorValue = sigmoid(colorValue);
+    const color = colorMax - adjustedColorValue;
 
-  const l = `${Math.round(10 * Math.log(adjustedColorValue))}%`; // max l = ~55% with x=255
+    const l = `${Math.round(10 * Math.log(adjustedColorValue))}%`; // max l = ~55% with x=255
 
-  return `hsl(${color}, 100%, ${l})`;
+    return `hsl(${color}, 100%, ${l})`;
+  }
+
+  if (colorValue === 0) {
+    return "black";
+  }
+
+  const color = 255 - colorValue;
+  return `hsl(${color}, 100%, 55%)`;
 }

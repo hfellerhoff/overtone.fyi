@@ -46,3 +46,6 @@ export const audioDataAnalysisAtom = atom<{
 }>({
   highestAmplitudeValues: [],
 });
+
+export type ColoringMethod = "sigmoid" | "linear";
+export const coloringMethodAtom = atom<ColoringMethod>("sigmoid");

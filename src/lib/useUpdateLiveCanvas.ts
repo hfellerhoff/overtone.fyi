@@ -1,12 +1,17 @@
 import { useAtomValue } from "jotai";
 import { useCallback } from "react";
-import { liveCanvasHeightAtom, liveCanvasWidthAtom } from "./fft";
+import {
+  coloringMethodAtom,
+  liveCanvasHeightAtom,
+  liveCanvasWidthAtom,
+} from "./fft";
 import { IProcessedAudioData } from "./useUpdateAudioValues";
 import { getAudioAmplitudeValueColor } from "./getHzDataElementColor";
 
 export function useUpdateLiveCanvas() {
   const canvasHeight = useAtomValue(liveCanvasHeightAtom);
   const canvasWidth = useAtomValue(liveCanvasWidthAtom);
+  const coloringMethod = useAtomValue(coloringMethodAtom);
 
   return useCallback(
     async (canvas: HTMLCanvasElement, hzData: IProcessedAudioData) => {
@@ -20,12 +25,16 @@ export function useUpdateLiveCanvas() {
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
       for (let i = 0; i < canvasHeight; i++) {
-        const value = hzData[i][1];
+        const [startHz, value] = hzData[i];
 
-        ctx.fillStyle = getAudioAmplitudeValueColor(value);
+        ctx.fillStyle = getAudioAmplitudeValueColor(
+          startHz,
+          value,
+          coloringMethod
+        );
         ctx.fillRect(canvasWidth - value, canvasHeight - i, value, 1);
       }
     },
-    [canvasHeight, canvasWidth]
+    [canvasHeight, canvasWidth, coloringMethod]
   );
 }
