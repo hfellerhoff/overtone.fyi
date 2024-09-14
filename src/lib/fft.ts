@@ -16,7 +16,12 @@ export const heightFactor = atom((get) => {
   return get(fftSizeAtom) / 546.1333333333;
 });
 
-export const timeseriesCanvasWidthAtom = atom(2048);
+export const TIMESERIES_CANVAS_WIDTHS = {
+  DESKTOP: 2048,
+  MOBILE: 1024,
+};
+
+export const timeseriesCanvasWidthAtom = atom(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
 export const timeseriesCanvasHeightAtom = atom((get) =>
   Math.floor(get(fftSizeAtom) / get(heightFactor))
 );

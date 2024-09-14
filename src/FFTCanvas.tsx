@@ -1,25 +1,29 @@
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom } from "jotai";
+import { MicIcon, MicOffIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
+import AnalysisInfo from "./components/AnalysisInfo";
+import FrequencyMarkers from "./components/FrequencyMarkers";
 import {
   analyzerAtom,
   fftSizeAtom,
-  frequencyMarkersAtom,
   isRecordingAtom,
   liveCanvasHeightAtom,
   liveCanvasWidthAtom,
   sampleRateAtom,
+  TIMESERIES_CANVAS_WIDTHS,
   timeseriesCanvasHeightAtom,
   timeseriesCanvasWidthAtom,
 } from "./lib/fft";
 import { useUpdateAudioValues } from "./lib/useUpdateAudioValues";
 import { useUpdateLiveCanvas } from "./lib/useUpdateLiveCanvas";
 import { useUpdateTimeseriesCanvas } from "./lib/useUpdateTimeseriesCanvas";
-import { MicIcon, MicOffIcon } from "lucide-react";
-import AnalysisInfo from "./components/AnalysisInfo";
+import { useMediaQuery } from "./lib/utils";
 
 const TOP_BAR_HEIGHT = 128;
 const VERTICAL_PADDING = 20;
-const CANVAS_HEIGHT = `calc(100vh - ${TOP_BAR_HEIGHT + VERTICAL_PADDING}px)`;
+const CANVAS_HEIGHT = `calc(var(--adjusted-height) - ${
+  TOP_BAR_HEIGHT + VERTICAL_PADDING
+}px)`;
 
 export default function FFTCanvas() {
   const timeSeriesCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -30,11 +34,12 @@ export default function FFTCanvas() {
 
   const [sampleRate] = useAtom(sampleRateAtom);
   const [fftSize] = useAtom(fftSizeAtom);
-  const [timeseriesCanvasWidth] = useAtom(timeseriesCanvasWidthAtom);
+  const [timeseriesCanvasWidth, setTimeseriesCanvasWidth] = useAtom(
+    timeseriesCanvasWidthAtom
+  );
   const [timeseriesCanvasHeight] = useAtom(timeseriesCanvasHeightAtom);
   const [liveCanvasWidth] = useAtom(liveCanvasWidthAtom);
   const [liveCanvasHeight] = useAtom(liveCanvasHeightAtom);
-  const frequencyMarkers = useAtomValue(frequencyMarkersAtom);
 
   const updateAudioValues = useUpdateAudioValues();
   const updateTimeseriesCanvas = useUpdateTimeseriesCanvas();
@@ -115,13 +120,33 @@ export default function FFTCanvas() {
     updateTimeseriesCanvas,
   ]);
 
-  const canvasHeightFactor =
-    (timeSeriesCanvasRef.current?.clientHeight ?? 0) / timeseriesCanvasHeight;
+  const isMobile = useMediaQuery("(max-width: 600px)");
+
+  useEffect(() => {
+    if (
+      isMobile &&
+      timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.DESKTOP
+    ) {
+      setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.MOBILE);
+    }
+
+    if (
+      !isMobile &&
+      timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.MOBILE
+    ) {
+      setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
+    }
+  });
 
   return (
-    <div className="w-screen h-screen p-4 pt-0 bg-neutral-900">
+    <div
+      className="w-screen p-4 pt-0 bg-neutral-900"
+      style={{
+        height: "var(--adjusted-height)",
+      }}
+    >
       <div
-        className="flex items-center gap-2 pt-4"
+        className="flex items-center gap-2 pt-4 overflow-x-auto"
         style={{
           height: TOP_BAR_HEIGHT,
         }}
@@ -151,20 +176,9 @@ export default function FFTCanvas() {
         <div
           className="relative h-full overflow-hidden"
           style={{
-            width: liveCanvasWidth * 2,
+            width: isMobile ? liveCanvasWidth : liveCanvasWidth * 2,
           }}
         >
-          {/* {frequencyMarkers.map((marker) => (
-            <div
-              key={marker[0]}
-              className="absolute right-0 flex items-center justify-center h-2.5 text-[10px] font-mono text-right select-none"
-              style={{
-                bottom: canvasHeightFactor * marker[1] - 5,
-              }}
-            >
-              {marker[0]}hz
-            </div>
-          ))} */}
           <canvas
             ref={liveCanvasRef}
             className="w-full h-full bg-black border rounded-lg border-input"
@@ -173,17 +187,10 @@ export default function FFTCanvas() {
           />
         </div>
         <div className="relative w-full h-full overflow-hidden">
-          {frequencyMarkers.map((marker) => (
-            <div
-              key={marker[0]}
-              className="absolute right-0 flex items-center justify-center h-2.5 text-[10px] font-mono text-right select-none"
-              style={{
-                bottom: canvasHeightFactor * marker[1] - 5,
-              }}
-            >
-              {marker[0]}hz
-            </div>
-          ))}
+          <FrequencyMarkers
+            canvas={timeSeriesCanvasRef.current}
+            canvasHeight={timeseriesCanvasHeight}
+          />
           <canvas
             ref={timeSeriesCanvasRef}
             className="w-full h-full bg-black border rounded-lg border-input"
