@@ -48,7 +48,8 @@ export function getAudioAmplitudeValueColor(
   });
 
   if (coloring === "sigmoid") {
-    const adjustedColorValue = sigmoid(colorValue);
+    const colorAdjustment = 24;
+    const adjustedColorValue = sigmoid(colorValue + colorAdjustment);
     const color = colorMax - adjustedColorValue;
 
     const l = `${Math.round(10 * Math.log(adjustedColorValue))}%`; // max l = ~55% with x=255
@@ -56,10 +57,16 @@ export function getAudioAmplitudeValueColor(
     return `hsl(${color}, 100%, ${l})`;
   }
 
+  const colorAdjustment = 16;
+
   if (colorValue === 0) {
     return "black";
   }
 
-  const color = 255 - colorValue;
-  return `hsl(${color}, 100%, ${Math.min(Math.abs(colorValue - 128), 50)}%)`;
+  const color = 255 - colorValue - colorAdjustment;
+
+  return `hsl(${color}, 100%, ${Math.min(
+    Math.abs(colorValue + colorAdjustment - 128),
+    50
+  )}%)`;
 }
