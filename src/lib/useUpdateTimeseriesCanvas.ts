@@ -1,5 +1,5 @@
 import { useAtomValue, useSetAtom } from "jotai";
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import {
   coloringMethodAtom,
   frequencyMarkerDistanceAtom,
@@ -18,12 +18,26 @@ export function useUpdateTimeseriesCanvas() {
 
   const setFrequencyMarkers = useSetAtom(frequencyMarkersAtom);
 
-  return useCallback(
-    async (canvas: HTMLCanvasElement, hzData: IProcessedAudioData) => {
-      const ctx = canvas.getContext("2d", {
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+
+  // const framesRef = useRef(0);
+  // const secondsRef = useRef(0);
+
+  const registerTimeseriesCanvas = useCallback(
+    (canvas: HTMLCanvasElement | null) => {
+      if (!canvas) return;
+
+      ctxRef.current = canvas.getContext("2d", {
         willReadFrequently: true,
         alpha: false,
       });
+    },
+    []
+  );
+
+  const updateTimeseriesCanvas = useCallback(
+    (_time: DOMHighResTimeStamp, hzData: IProcessedAudioData) => {
+      const ctx = ctxRef.current;
       if (!ctx) return;
 
       const previousFrame = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
@@ -40,6 +54,10 @@ export function useUpdateTimeseriesCanvas() {
           updatedFrequencyMarkers.push([Math.round(startHz), i]);
         }
 
+        if (!value) {
+          continue;
+        }
+
         ctx.fillStyle = getAudioAmplitudeValueColor(
           startHz,
           value,
@@ -50,6 +68,15 @@ export function useUpdateTimeseriesCanvas() {
 
       updatedFrequencyMarkers.reverse();
       setFrequencyMarkers(updatedFrequencyMarkers);
+
+      // framesRef.current += 1;
+
+      // const seconds = Math.floor(time / 1000);
+      // if (seconds > secondsRef.current) {
+      //   secondsRef.current = seconds;
+      //   console.log(framesRef.current + " fps");
+      //   framesRef.current = 0;
+      // }
     },
     [
       canvasHeight,
@@ -59,4 +86,9 @@ export function useUpdateTimeseriesCanvas() {
       setFrequencyMarkers,
     ]
   );
+
+  return {
+    registerTimeseriesCanvas,
+    updateTimeseriesCanvas,
+  };
 }

@@ -1,8 +1,10 @@
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useCallback } from "react";
 import {
   audioDataAnalysisAtom,
   audioDataArrayAtom,
+  audioDataHistory,
+  audioDataHistoryAtom,
   binSizeHzAtom,
   maxDisplayHzAtom,
   timeseriesCanvasHeightAtom,
@@ -85,10 +87,12 @@ function getHzDataArray(
 
 export function useUpdateAudioValues() {
   const canvasHeight = useAtomValue(timeseriesCanvasHeightAtom);
-  const audioDataArray = useAtomValue(audioDataArrayAtom);
   const binSizeHz = useAtomValue(binSizeHzAtom);
   const maxDisplayHz = useAtomValue(maxDisplayHzAtom);
   const setAudioAnalysis = useSetAtom(audioDataAnalysisAtom);
+
+  const audioDataArray = useAtomValue(audioDataArrayAtom);
+  const audioDataHistory = useAtomValue(audioDataHistoryAtom);
 
   return useCallback(
     (analyzer: AnalyserNode) => {
@@ -125,6 +129,8 @@ export function useUpdateAudioValues() {
       setAudioAnalysis({
         highestAmplitudeValues,
       });
+
+      audioDataHistory.unshift(hzDataArray);
 
       return hzDataArray;
     },

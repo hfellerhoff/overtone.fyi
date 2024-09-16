@@ -1,12 +1,16 @@
 import { atom } from "jotai";
-import { IProcessedAudioDataItem } from "./useUpdateAudioValues";
+import {
+  IProcessedAudioData,
+  IProcessedAudioDataItem,
+} from "./useUpdateAudioValues";
+import { atomWithStorage } from "jotai/utils";
 
 export const analyzerAtom = atom<AnalyserNode | null>(null);
 
 export const isRecordingAtom = atom(true);
 
 export const sampleRateAtom = atom(48000);
-export const fftSizeAtom = atom(8192);
+export const fftSizeAtom = atomWithStorage("fft-size", 8192);
 export const binSizeAtom = atom((get) => get(fftSizeAtom) * 2);
 export const binSizeHzAtom = atom(
   (get) => get(sampleRateAtom) / get(binSizeAtom)
@@ -38,6 +42,8 @@ export const audioDataArrayAtom = atom(
   (get) => new Uint8Array(get(binSizeAtom))
 );
 
+export const audioDataHistoryAtom = atom<IProcessedAudioData[]>([]);
+
 export const frequencyMarkersAtom = atom<[hz: number, index: number][]>([]);
 export const frequencyMarkerDistanceAtom = atom(25);
 
@@ -47,5 +53,8 @@ export const audioDataAnalysisAtom = atom<{
   highestAmplitudeValues: [],
 });
 
-export type ColoringMethod = "sigmoid" | "linear";
-export const coloringMethodAtom = atom<ColoringMethod>("sigmoid");
+export type ColoringMethod = "sigmoid" | "detailed";
+export const coloringMethodAtom = atomWithStorage<ColoringMethod>(
+  "coloring-method",
+  "sigmoid"
+);

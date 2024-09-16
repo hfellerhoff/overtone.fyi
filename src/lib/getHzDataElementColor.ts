@@ -61,5 +61,5 @@ export function getAudioAmplitudeValueColor(
   }
 
   const color = 255 - colorValue;
-  return `hsl(${color}, 100%, 55%)`;
+  return `hsl(${color}, 100%, ${Math.min(Math.abs(colorValue - 128), 50)}%)`;
 }

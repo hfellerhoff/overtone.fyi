@@ -6,11 +6,11 @@ import AnalysisSquareWrapper from "./AnalysisSquareWrapper";
 const COLORING_METHOD_OPTIONS = [
   {
     value: "sigmoid",
-    label: "Default",
+    label: "Sigmoid",
   },
   {
-    value: "linear",
-    label: "Linear",
+    value: "detailed",
+    label: "Detailed",
   },
 ] as const;
 

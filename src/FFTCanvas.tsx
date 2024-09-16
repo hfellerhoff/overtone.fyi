@@ -42,7 +42,8 @@ export default function FFTCanvas() {
   const [liveCanvasHeight] = useAtom(liveCanvasHeightAtom);
 
   const updateAudioValues = useUpdateAudioValues();
-  const updateTimeseriesCanvas = useUpdateTimeseriesCanvas();
+  const { registerTimeseriesCanvas, updateTimeseriesCanvas } =
+    useUpdateTimeseriesCanvas();
   const updateLiveCanvas = useUpdateLiveCanvas();
 
   useEffect(() => {
@@ -93,11 +94,11 @@ export default function FFTCanvas() {
 
     let id = 0;
 
-    const update = () => {
+    const update = (time: DOMHighResTimeStamp) => {
       const hzData = updateAudioValues(analyzer);
 
       if (timeSeriesCanvasRef.current) {
-        updateTimeseriesCanvas(timeSeriesCanvasRef.current, hzData);
+        updateTimeseriesCanvas(time, hzData);
       }
 
       if (liveCanvasRef.current) {
@@ -107,7 +108,8 @@ export default function FFTCanvas() {
       id = window.requestAnimationFrame(update);
     };
 
-    update();
+    registerTimeseriesCanvas(timeSeriesCanvasRef.current);
+    update(0);
 
     return () => {
       window.cancelAnimationFrame(id);
@@ -115,6 +117,7 @@ export default function FFTCanvas() {
   }, [
     analyzer,
     isRecording,
+    registerTimeseriesCanvas,
     updateAudioValues,
     updateLiveCanvas,
     updateTimeseriesCanvas,
@@ -122,8 +125,6 @@ export default function FFTCanvas() {
 
   const isTablet = useMediaQuery("(max-width: 800px)");
   const isMobile = useMediaQuery("(max-width: 600px)");
-
-  const hasAutoSetFFTSize = useRef(false);
 
   const [hasMounted, setHasMounted] = useState(false);
   useEffect(() => {
@@ -136,25 +137,14 @@ export default function FFTCanvas() {
       if (timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.DESKTOP) {
         setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.MOBILE);
       }
-
-      if (!hasAutoSetFFTSize.current) {
-        setFFTSize(4096);
-        hasAutoSetFFTSize.current = true;
-      }
     }
 
     if (!isMobile) {
       if (timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.MOBILE) {
         setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
       }
-
-      if (!hasAutoSetFFTSize.current) {
-        setFFTSize(8192);
-        hasAutoSetFFTSize.current = true;
-      }
     }
   }, [
-    hasAutoSetFFTSize,
     hasMounted,
     isMobile,
     setFFTSize,
