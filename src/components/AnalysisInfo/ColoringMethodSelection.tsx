@@ -5,12 +5,12 @@ import AnalysisSquareWrapper from "./AnalysisSquareWrapper";
 
 const COLORING_METHOD_OPTIONS = [
   {
-    value: "sigmoid",
-    label: "Focused",
-  },
-  {
     value: "detailed",
     label: "Detailed",
+  },
+  {
+    value: "sigmoid",
+    label: "Focused",
   },
 ] as const;
 

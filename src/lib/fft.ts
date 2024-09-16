@@ -61,7 +61,7 @@ export const audioDataAnalysisAtom = atom<{
 export type ColoringMethod = "sigmoid" | "detailed";
 export const coloringMethodAtom = atomWithStorage<ColoringMethod>(
   "coloring-method",
-  "sigmoid"
+  "detailed"
 );
 
 export type FrequencyLabelMethod = "linear" | "piano";
