@@ -1,9 +1,8 @@
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback } from "react";
 import {
   audioDataAnalysisAtom,
   audioDataArrayAtom,
-  audioDataHistory,
   audioDataHistoryAtom,
   binSizeHzAtom,
   maxDisplayHzAtom,
@@ -134,6 +133,13 @@ export function useUpdateAudioValues() {
 
       return hzDataArray;
     },
-    [audioDataArray, binSizeHz, canvasHeight, maxDisplayHz, setAudioAnalysis]
+    [
+      audioDataArray,
+      audioDataHistory,
+      binSizeHz,
+      canvasHeight,
+      maxDisplayHz,
+      setAudioAnalysis,
+    ]
   );
 }
