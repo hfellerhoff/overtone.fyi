@@ -16,8 +16,6 @@ export const binSizeHzAtom = atom(
   (get) => get(sampleRateAtom) / get(binSizeAtom)
 );
 
-console.log(devicePixelRatio);
-
 export const heightFactor = atom((get) => {
   return get(fftSizeAtom) / (546.1333333333 * devicePixelRatio);
 });
