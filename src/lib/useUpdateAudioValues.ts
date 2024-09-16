@@ -10,26 +10,16 @@ import {
   maxDisplayHzAtom,
   timeseriesCanvasHeightAtom,
 } from "./fft";
+import { getPitchByNumber } from "@/components/AnalysisInfo/pitches";
 
-const factor = Math.pow(2, 1 / 12);
-
-const referenceHz = 440;
-const referenceNoteNumber = 49;
-const notes = 84;
-const baseNote = 12;
+const notes = 96;
+const baseNote = 6;
 
 function getPianoPixelStart(pixelIndex: number, pixelCount: number) {
   const notePixelDistance = pixelCount / notes;
   const adjustedPixelIndex = baseNote * notePixelDistance + pixelIndex;
-  // const computedFactor = notePixelDistance * factor;
 
-  return (
-    referenceHz *
-    Math.pow(
-      factor,
-      adjustedPixelIndex / notePixelDistance - referenceNoteNumber
-    )
-  );
+  return getPitchByNumber(adjustedPixelIndex / notePixelDistance);
 }
 
 function getPianoPixelSize(pixelIndex: number, pixelCount: number) {

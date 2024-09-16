@@ -76,7 +76,7 @@ export function useUpdateFrequencyLabelCanvas() {
 
             if (pitch) {
               const pitchLabel = pitch[1];
-              if (pitchLabel.includes("A") && !pitchLabel.includes("#")) {
+              if (pitchLabel.includes("C") && !pitchLabel.includes("#")) {
                 ctx.fillStyle = "#8A8A8A";
                 ctx.fillRect(0, canvasHeight - i, canvasWidth, 1);
                 ctx.fillStyle = "#FFFFFF";
