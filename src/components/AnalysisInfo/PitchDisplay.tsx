@@ -3,7 +3,7 @@ import type { OvertoneBucket } from ".";
 import { PitchAndLabel, pitches } from "./pitches";
 import AnalysisSquareWrapper from "./AnalysisSquareWrapper";
 
-const PITCH_SENSITIVITY = 0.7;
+const PITCH_SENSITIVITY = 0.85;
 
 function findPitchLabel(value: number) {
   let lowerValue: PitchAndLabel = [0, ""];
