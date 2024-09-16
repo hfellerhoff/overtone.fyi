@@ -1,6 +1,8 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback } from "react";
 import {
+  AnalayzerScale,
+  analyzerScaleAtom,
   audioDataAnalysisAtom,
   audioDataArrayAtom,
   audioDataHistoryAtom,
@@ -8,6 +10,33 @@ import {
   maxDisplayHzAtom,
   timeseriesCanvasHeightAtom,
 } from "./fft";
+
+const factor = Math.pow(2, 1 / 12);
+
+const referenceHz = 440;
+const referenceNoteNumber = 49;
+const notes = 84;
+const baseNote = 12;
+
+function getPianoPixelStart(pixelIndex: number, pixelCount: number) {
+  const notePixelDistance = pixelCount / notes;
+  const adjustedPixelIndex = baseNote * notePixelDistance + pixelIndex;
+  // const computedFactor = notePixelDistance * factor;
+
+  return (
+    referenceHz *
+    Math.pow(
+      factor,
+      adjustedPixelIndex / notePixelDistance - referenceNoteNumber
+    )
+  );
+}
+
+function getPianoPixelSize(pixelIndex: number, pixelCount: number) {
+  const curr = getPianoPixelStart(pixelIndex, pixelCount);
+  const next = getPianoPixelStart(pixelIndex + 1, pixelCount);
+  return next - curr;
+}
 
 const getLogarithmicPixelStart = (
   maxHz: number,
@@ -34,26 +63,24 @@ function getHzDataArray(
   audioDataArray: Uint8Array,
   canvasHeight: number,
   binSizeHz: number,
-  maxDisplayHz: number
+  maxDisplayHz: number,
+  analyzerScale: AnalayzerScale
 ): IProcessedAudioData {
   return Array(canvasHeight)
     .fill(0)
     .map((_, i) => {
-      const logarithmicPixelSize = getLogarithmicPixelSize(
-        maxDisplayHz,
-        canvasHeight,
-        i
-      );
-      const pixelSize = logarithmicPixelSize;
+      let pixelSize = 0;
+      let pixelStartHz = 0;
 
-      const logarithmicPixelStart = getLogarithmicPixelStart(
-        maxDisplayHz,
-        canvasHeight,
-        i
-      );
-      const pixelStartFrequency = logarithmicPixelStart;
+      if (analyzerScale === "logarithmic") {
+        pixelSize = getLogarithmicPixelSize(maxDisplayHz, canvasHeight, i);
+        pixelStartHz = getLogarithmicPixelStart(maxDisplayHz, canvasHeight, i);
+      } else {
+        pixelSize = getPianoPixelSize(i, canvasHeight);
+        pixelStartHz = getPianoPixelStart(i, canvasHeight);
+      }
 
-      const pixelFrequencyMidpoint = pixelStartFrequency + pixelSize / 2;
+      const pixelFrequencyMidpoint = pixelStartHz + pixelSize / 2;
 
       let j = 0;
       let previousDistance = 100000000;
@@ -80,7 +107,7 @@ function getHzDataArray(
         value = (lowerBinValue + upperBinValue) / 2;
       }
 
-      return [logarithmicPixelStart, value];
+      return [pixelStartHz, value];
     });
 }
 
@@ -92,6 +119,7 @@ export function useUpdateAudioValues() {
 
   const audioDataArray = useAtomValue(audioDataArrayAtom);
   const audioDataHistory = useAtomValue(audioDataHistoryAtom);
+  const analyzerScale = useAtomValue(analyzerScaleAtom);
 
   return useCallback(
     (analyzer: AnalyserNode) => {
@@ -101,12 +129,13 @@ export function useUpdateAudioValues() {
         audioDataArray,
         canvasHeight,
         binSizeHz,
-        maxDisplayHz
+        maxDisplayHz,
+        analyzerScale
       );
 
       const highestAmplitudeValues = hzDataArray.reduce(
         (accValues, element) => {
-          if (accValues.length < 64) {
+          if (accValues.length < 128) {
             accValues.push(element);
             return accValues;
           }
@@ -131,9 +160,14 @@ export function useUpdateAudioValues() {
 
       audioDataHistory.unshift(hzDataArray);
 
+      if (audioDataHistory.length > 8192) {
+        audioDataHistory.pop();
+      }
+
       return hzDataArray;
     },
     [
+      analyzerScale,
       audioDataArray,
       audioDataHistory,
       binSizeHz,

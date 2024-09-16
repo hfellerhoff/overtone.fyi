@@ -1,4 +1,4 @@
-export const pitches = {
+export const pitchMap = {
   [16.35]: "C0",
   [17.32]: "C#0/Db0",
   [18.35]: "D0",
@@ -108,3 +108,8 @@ export const pitches = {
   [7458.62]: "A#8/Bb8",
   [7902.13]: "B8",
 };
+
+export type PitchAndLabel = [hz: number, label: string];
+export const pitches = Object.entries(pitchMap)
+  .map((entry) => [parseFloat(entry[0]), entry[1]] as PitchAndLabel)
+  .sort((a, b) => (a[0] < b[0] ? -1 : 1));

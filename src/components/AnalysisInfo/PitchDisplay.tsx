@@ -1,15 +1,9 @@
 import { useMemo } from "react";
 import type { OvertoneBucket } from ".";
-import { pitches } from "./pitches";
+import { PitchAndLabel, pitches } from "./pitches";
 import AnalysisSquareWrapper from "./AnalysisSquareWrapper";
 
 const PITCH_SENSITIVITY = 0.7;
-
-type PitchAndLabel = [hz: number, label: string];
-
-const entries = Object.entries(pitches)
-  .map((entry) => [parseFloat(entry[0]), entry[1]] as PitchAndLabel)
-  .sort((a, b) => (a[0] < b[0] ? -1 : 1));
 
 function findPitchLabel(value: number) {
   let lowerValue: PitchAndLabel = [0, ""];
@@ -17,20 +11,20 @@ function findPitchLabel(value: number) {
 
   let i = 0;
 
-  let entry = entries[i];
+  let entry = pitches[i];
 
   while (entry[0] < value) {
     lowerValue = entry;
 
-    if (!entries?.[i + 1]) {
+    if (!pitches?.[i + 1]) {
       break;
     }
 
     i += 1;
-    entry = entries?.[i];
+    entry = pitches?.[i];
   }
 
-  higherValue = entries?.[i + 1] ?? entries[i];
+  higherValue = pitches?.[i + 1] ?? pitches[i];
 
   const lowerDiff = value - lowerValue[0];
   const higherDiff = higherValue[0] - value;

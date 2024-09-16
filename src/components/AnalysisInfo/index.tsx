@@ -5,6 +5,8 @@ import { useMemo } from "react";
 import PitchDisplay from "./PitchDisplay";
 import FFTSizeSelection from "./FFTSizeSelection";
 import ColoringMethodSelection from "./ColoringMethodSelection";
+import FrequencyLabelingMethodSelection from "./FrequencyLabelingMethodSelection";
+import AnalyzerScaleSelection from "./AnalyzerScaleSelection";
 
 // The percent similarity where two distinct HZ values
 // will be lumped into one bucket
@@ -74,6 +76,8 @@ export default function AnalysisInfo() {
     <div className="flex h-full gap-2">
       <PitchDisplay overtoneBuckets={overtoneBuckets} />
       <ColoringMethodSelection />
+      <FrequencyLabelingMethodSelection />
+      <AnalyzerScaleSelection />
       <FFTSizeSelection />
       {/* <div className="grid h-full border rounded-md shadow-sm place-items-center aspect-square border-input bg-background">
         {overtoneBuckets.map((bucket) => (

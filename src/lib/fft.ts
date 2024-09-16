@@ -10,7 +10,7 @@ export const analyzerAtom = atom<AnalyserNode | null>(null);
 export const isRecordingAtom = atom(true);
 
 export const sampleRateAtom = atom(48000);
-export const fftSizeAtom = atomWithStorage("fft-size", 8192);
+export const fftSizeAtom = atomWithStorage("fft-size", 16384);
 export const binSizeAtom = atom((get) => get(fftSizeAtom) * 2);
 export const binSizeHzAtom = atom(
   (get) => get(sampleRateAtom) / get(binSizeAtom)
@@ -32,6 +32,11 @@ export const timeseriesCanvasHeightAtom = atom((get) =>
 
 export const liveCanvasWidthAtom = atom(256 + 16);
 export const liveCanvasHeightAtom = atom((get) =>
+  Math.floor(get(fftSizeAtom) / get(heightFactor))
+);
+
+export const frequencyLabelCanvasWidthAtom = atom(64);
+export const frequencyLabelCanvasHeightAtom = atom((get) =>
   Math.floor(get(fftSizeAtom) / get(heightFactor))
 );
 
@@ -57,4 +62,16 @@ export type ColoringMethod = "sigmoid" | "detailed";
 export const coloringMethodAtom = atomWithStorage<ColoringMethod>(
   "coloring-method",
   "sigmoid"
+);
+
+export type FrequencyLabelMethod = "linear" | "piano";
+export const frequencyLabelMethodAtom = atomWithStorage<FrequencyLabelMethod>(
+  "frequency-labeling-method",
+  "piano"
+);
+
+export type AnalayzerScale = "piano" | "logarithmic";
+export const analyzerScaleAtom = atomWithStorage<AnalayzerScale>(
+  "analyzer-scale",
+  "piano"
 );

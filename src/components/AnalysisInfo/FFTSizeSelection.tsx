@@ -27,7 +27,7 @@ export default function FFTSizeSelection() {
 
   return (
     <AnalysisSquareWrapper
-      label="FFT Size"
+      label="Resolution"
       tooltip="The window size, in samples, that is used when performing a Fast Fourier Transform."
       tooltipLink="https://en.wikipedia.org/wiki/Fast_Fourier_transform"
     >

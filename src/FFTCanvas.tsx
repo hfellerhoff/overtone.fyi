@@ -1,4 +1,4 @@
-import { useAtom } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import { MicIcon, MicOffIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import AnalysisInfo from "./components/AnalysisInfo";
@@ -6,6 +6,8 @@ import FrequencyMarkers from "./components/FrequencyMarkers";
 import {
   analyzerAtom,
   fftSizeAtom,
+  frequencyLabelCanvasHeightAtom,
+  frequencyLabelCanvasWidthAtom,
   isRecordingAtom,
   liveCanvasHeightAtom,
   liveCanvasWidthAtom,
@@ -18,6 +20,7 @@ import { useUpdateAudioValues } from "./lib/useUpdateAudioValues";
 import { useUpdateLiveCanvas } from "./lib/useUpdateLiveCanvas";
 import { useUpdateTimeseriesCanvas } from "./lib/useUpdateTimeseriesCanvas";
 import { useMediaQuery } from "./lib/utils";
+import { useUpdateFrequencyLabelCanvas } from "./lib/useUpdateFrequencyLabelCanvas";
 
 const TOP_BAR_HEIGHT = 128;
 const VERTICAL_PADDING = 20;
@@ -26,25 +29,34 @@ const CANVAS_HEIGHT = `calc(var(--adjusted-height) - ${
 }px)`;
 
 export default function FFTCanvas() {
-  const timeSeriesCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
   const [analyzer, setAnalyzer] = useAtom(analyzerAtom);
   const [isRecording, setIsRecording] = useAtom(isRecordingAtom);
 
   const [sampleRate] = useAtom(sampleRateAtom);
   const [fftSize, setFFTSize] = useAtom(fftSizeAtom);
+
+  const timeSeriesCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [timeseriesCanvasWidth, setTimeseriesCanvasWidth] = useAtom(
     timeseriesCanvasWidthAtom
   );
   const [timeseriesCanvasHeight] = useAtom(timeseriesCanvasHeightAtom);
-  const [liveCanvasWidth] = useAtom(liveCanvasWidthAtom);
-  const [liveCanvasHeight] = useAtom(liveCanvasHeightAtom);
-
-  const updateAudioValues = useUpdateAudioValues();
   const { registerTimeseriesCanvas, updateTimeseriesCanvas } =
     useUpdateTimeseriesCanvas();
+
+  const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [liveCanvasWidth] = useAtom(liveCanvasWidthAtom);
+  const [liveCanvasHeight] = useAtom(liveCanvasHeightAtom);
   const updateLiveCanvas = useUpdateLiveCanvas();
+
+  const frequencyLabelCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const frequencyLabelCanvasWidth = useAtomValue(frequencyLabelCanvasWidthAtom);
+  const frequencyLabelCanvasHeight = useAtomValue(
+    frequencyLabelCanvasHeightAtom
+  );
+  const { registerFrequencyLabelCanvas, updateFrequencyLabelCanvas } =
+    useUpdateFrequencyLabelCanvas();
+
+  const updateAudioValues = useUpdateAudioValues();
 
   useEffect(() => {
     const handleKeypress = (ev: KeyboardEvent) => {
@@ -100,15 +112,19 @@ export default function FFTCanvas() {
       if (timeSeriesCanvasRef.current) {
         updateTimeseriesCanvas(time, hzData);
       }
-
       if (liveCanvasRef.current) {
         updateLiveCanvas(liveCanvasRef.current, hzData);
+      }
+      if (frequencyLabelCanvasRef.current) {
+        updateFrequencyLabelCanvas(time, hzData);
       }
 
       id = window.requestAnimationFrame(update);
     };
 
     registerTimeseriesCanvas(timeSeriesCanvasRef.current);
+    registerFrequencyLabelCanvas(frequencyLabelCanvasRef.current);
+
     update(0);
 
     return () => {
@@ -117,8 +133,10 @@ export default function FFTCanvas() {
   }, [
     analyzer,
     isRecording,
+    registerFrequencyLabelCanvas,
     registerTimeseriesCanvas,
     updateAudioValues,
+    updateFrequencyLabelCanvas,
     updateLiveCanvas,
     updateTimeseriesCanvas,
   ]);
@@ -205,6 +223,19 @@ export default function FFTCanvas() {
             className="w-full h-full bg-black border rounded-lg border-input"
             width={liveCanvasWidth}
             height={liveCanvasHeight}
+          />
+        </div>
+        <div
+          className="relative h-full overflow-hidden"
+          style={{
+            width: frequencyLabelCanvasWidth,
+          }}
+        >
+          <canvas
+            ref={frequencyLabelCanvasRef}
+            className="w-full h-full bg-black border rounded-lg border-input"
+            width={frequencyLabelCanvasWidth}
+            height={frequencyLabelCanvasHeight}
           />
         </div>
         <div className="relative w-full h-full overflow-hidden">
