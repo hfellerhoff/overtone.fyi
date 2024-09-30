@@ -7,7 +7,7 @@ import { atomWithStorage } from "jotai/utils";
 
 export const analyzerAtom = atom<AnalyserNode | null>(null);
 
-export const isRecordingAtom = atom(true);
+export const isRecordingAtom = atom(false);
 
 export const sampleRateAtom = atom(48000);
 export const fftSizeAtom = atomWithStorage("fft-size", 8192);
@@ -75,3 +75,6 @@ export const analyzerScaleAtom = atomWithStorage<AnalayzerScale>(
   "analyzer-scale",
   "piano"
 );
+
+export const recordingsAtom = atom(new Map<string, Blob>());
+export const activeRecordingIdAtom = atom("");

@@ -154,8 +154,6 @@ for (let o = 0; o < octaves; o += 1) {
   }
 }
 
-console.log(pitchMap);
-
 export { pitchMap };
 
 export type PitchAndLabel = [hz: number, label: string];

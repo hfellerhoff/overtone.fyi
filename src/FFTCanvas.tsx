@@ -1,5 +1,4 @@
 import { useAtom, useAtomValue } from "jotai";
-import { MicIcon, MicOffIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import AnalysisInfo from "./components/AnalysisInfo";
 import FrequencyMarkers from "./components/FrequencyMarkers";
@@ -11,6 +10,7 @@ import {
   isRecordingAtom,
   liveCanvasHeightAtom,
   liveCanvasWidthAtom,
+  recordingsAtom,
   sampleRateAtom,
   TIMESERIES_CANVAS_WIDTHS,
   timeseriesCanvasHeightAtom,
@@ -21,6 +21,7 @@ import { useUpdateLiveCanvas } from "./lib/useUpdateLiveCanvas";
 import { useUpdateTimeseriesCanvas } from "./lib/useUpdateTimeseriesCanvas";
 import { useMediaQuery } from "./lib/utils";
 import { useUpdateFrequencyLabelCanvas } from "./lib/useUpdateFrequencyLabelCanvas";
+import { RecordButton } from "./components/RecordButton";
 
 const TOP_BAR_HEIGHT = 128;
 const VERTICAL_PADDING = 20;
@@ -30,7 +31,7 @@ const CANVAS_HEIGHT = `calc(var(--adjusted-height) - ${
 
 export default function FFTCanvas() {
   const [analyzer, setAnalyzer] = useAtom(analyzerAtom);
-  const [isRecording, setIsRecording] = useAtom(isRecordingAtom);
+  const isRecording = useAtomValue(isRecordingAtom);
 
   const [sampleRate] = useAtom(sampleRateAtom);
   const [fftSize, setFFTSize] = useAtom(fftSizeAtom);
@@ -47,6 +48,7 @@ export default function FFTCanvas() {
   const [liveCanvasWidth] = useAtom(liveCanvasWidthAtom);
   const [liveCanvasHeight] = useAtom(liveCanvasHeightAtom);
   const updateLiveCanvas = useUpdateLiveCanvas();
+  const recordings = useAtomValue(recordingsAtom);
 
   const frequencyLabelCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const frequencyLabelCanvasWidth = useAtomValue(frequencyLabelCanvasWidthAtom);
@@ -59,20 +61,6 @@ export default function FFTCanvas() {
   const updateAudioValues = useUpdateAudioValues();
 
   useEffect(() => {
-    const handleKeypress = (ev: KeyboardEvent) => {
-      if (ev.key === " ") {
-        setIsRecording((prevIsRecording) => !prevIsRecording);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeypress);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeypress);
-    };
-  });
-
-  useEffect(() => {
     const getDevices = async () => {
       const userMediaStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -80,26 +68,50 @@ export default function FFTCanvas() {
       const audioContext = new AudioContext({
         sampleRate,
       });
-      const source = audioContext.createMediaStreamSource(userMediaStream);
 
-      const analyser = audioContext.createAnalyser();
+      const recordingId: string = recordings.keys().next().value;
+      if (!recordingId) return;
 
-      source.connect(analyser);
+      const audioElement = document.getElementById(
+        recordingId
+      ) as HTMLAudioElement;
+      if (!audioElement) return;
 
-      analyser.fftSize = fftSize;
+      console.log(audioElement);
 
-      setAnalyzer(analyser);
+      const source = audioContext.createMediaElementSource(audioElement);
+
+      const _analyzer = audioContext.createAnalyser();
+
+      source.connect(_analyzer);
+
+      _analyzer.fftSize = fftSize;
+
+      setAnalyzer(_analyzer);
     };
 
     getDevices();
   }, [
     fftSize,
+    recordings,
     sampleRate,
     setAnalyzer,
     updateAudioValues,
     updateLiveCanvas,
     updateTimeseriesCanvas,
+    isRecording,
   ]);
+
+  useEffect(() => {
+    console.log("here");
+    console.log(!isRecording, !!analyzer);
+    if (!isRecording && !!analyzer) {
+      console.log("here2");
+      const data = new Uint8Array(fftSize * 2);
+      analyzer.getByteFrequencyData(data);
+      console.log(data);
+    }
+  }, [analyzer, fftSize, isRecording]);
 
   useEffect(() => {
     if (!analyzer || !isRecording) return;
@@ -190,20 +202,7 @@ export default function FFTCanvas() {
           height: TOP_BAR_HEIGHT,
         }}
       >
-        <button
-          className="grid h-full border rounded-md shadow-sm place-items-center aspect-square border-input bg-background hover:bg-accent hover:text-accent-foreground"
-          onClick={() => setIsRecording((prevIsRecording) => !prevIsRecording)}
-        >
-          {isRecording ? (
-            <span className="flex flex-col items-center gap-1">
-              <MicOffIcon size={16} /> Stop
-            </span>
-          ) : (
-            <span className="flex flex-col items-center gap-1">
-              <MicIcon size={16} /> Start
-            </span>
-          )}
-        </button>
+        <RecordButton />
         <AnalysisInfo />
       </div>
       <main
