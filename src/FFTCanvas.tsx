@@ -37,7 +37,7 @@ export default function FFTCanvas() {
 
   const timeSeriesCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [timeseriesCanvasWidth, setTimeseriesCanvasWidth] = useAtom(
-    timeseriesCanvasWidthAtom
+    timeseriesCanvasWidthAtom,
   );
   const [timeseriesCanvasHeight] = useAtom(timeseriesCanvasHeightAtom);
   const { registerTimeseriesCanvas, updateTimeseriesCanvas } =
@@ -51,7 +51,7 @@ export default function FFTCanvas() {
   const frequencyLabelCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const frequencyLabelCanvasWidth = useAtomValue(frequencyLabelCanvasWidthAtom);
   const frequencyLabelCanvasHeight = useAtomValue(
-    frequencyLabelCanvasHeightAtom
+    frequencyLabelCanvasHeightAtom,
   );
   const { registerFrequencyLabelCanvas, updateFrequencyLabelCanvas } =
     useUpdateFrequencyLabelCanvas();
@@ -87,6 +87,7 @@ export default function FFTCanvas() {
       source.connect(analyser);
 
       analyser.fftSize = fftSize;
+      analyser.smoothingTimeConstant = 0;
 
       setAnalyzer(analyser);
     };
