@@ -43,7 +43,7 @@ that changed, or a full redraw after a zoom.
 | Shift + wheel, or horizontal wheel / swipe | Scroll backward and forward in time |
 | Alt + wheel | Pan the frequency range |
 | Esc or 0, or the "back to live" button | Reset zoom and return to live |
-| F11 or Cmd/Ctrl+Shift+F (desktop) | Toggle fullscreen; the desktop app starts fullscreen with no title bar |
+| F11 or Cmd/Ctrl+Shift+F (desktop) | Toggle fullscreen; the desktop app starts maximized with no title bar |
 
 * **Desktop**: `cpal` captures audio on a realtime thread → lock-free ring
   buffer → engine. The webview calls the `frame` command and receives raw
