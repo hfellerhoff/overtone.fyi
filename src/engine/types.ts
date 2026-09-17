@@ -41,6 +41,8 @@ export interface EngineInfo {
   ticksPerSecond: number;
   /** Seconds of history the memory budget can hold. */
   historySeconds: number;
+  /** Seconds of raw audio retained for re-analysis after settings changes. */
+  audioSeconds: number;
   /** `[minHz, maxHz, fftSize]` per band, ascending. */
   bands: [number, number, number][];
   notes: string[];

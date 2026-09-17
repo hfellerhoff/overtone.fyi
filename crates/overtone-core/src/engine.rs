@@ -8,6 +8,7 @@
 //! re-rendered at a different frequency range.
 
 use crate::analyser::Analyser;
+use crate::audio::AudioRing;
 use crate::color::{build_lut, lut_index, Coloring};
 use crate::history::History;
 use crate::labels::{frequency_markers, render_label_strip, Labeling, Marker};
@@ -30,6 +31,14 @@ pub const DEFAULT_HISTORY_BYTES: usize = 256 << 20;
 /// Audio that arrives while no frames are requested is dropped beyond this
 /// many seconds, so a hidden window does not grow memory without bound.
 pub const MAX_PENDING_SECONDS: f64 = 8.0;
+/// Default memory budget for retained raw audio, used to re-analyse when
+/// the analysis settings change (4 bytes per sample: 64 MB ≈ 5.8 min at 48 kHz).
+pub const DEFAULT_AUDIO_BYTES: usize = 64 << 20;
+/// After an analysis change this much of the newest audio is re-analysed
+/// before returning; the rest is filled in across later frames.
+pub const SYNC_REANALYSIS_SECONDS: f64 = 4.0;
+/// Seconds of old audio re-analysed per frame while a re-analysis is pending.
+pub const REANALYSIS_SECONDS_PER_FRAME: f64 = 0.5;
 /// Ticks folded into one timeline column are capped here when zoomed far out.
 pub const MAX_TICKS_PER_COLUMN: usize = 64;
 
@@ -41,6 +50,10 @@ pub const ANALYSIS_OVERLAP_DIVISOR: usize = 16;
 
 fn default_history_bytes() -> usize {
     DEFAULT_HISTORY_BYTES
+}
+
+fn default_audio_bytes() -> usize {
+    DEFAULT_AUDIO_BYTES
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -59,6 +72,9 @@ pub struct EngineConfig {
     /// Memory budget for recorded spectra.
     #[serde(default = "default_history_bytes")]
     pub history_bytes: usize,
+    /// Memory budget for retained raw audio.
+    #[serde(default = "default_audio_bytes")]
+    pub audio_bytes: usize,
     /// Frequency bands and the window length used for each, as a divisor of
     /// `fft_size`. Defaults to halving the window per octave above 250 Hz.
     #[serde(default = "default_bands")]
@@ -121,6 +137,7 @@ impl Default for EngineConfig {
             labeling: Labeling::Piano,
             range: None,
             history_bytes: DEFAULT_HISTORY_BYTES,
+            audio_bytes: DEFAULT_AUDIO_BYTES,
             bands: default_bands(),
         }
     }
@@ -145,6 +162,8 @@ pub struct EngineInfo {
     pub ticks_per_second: f64,
     /// Seconds of history the budget can hold.
     pub history_seconds: f64,
+    /// Seconds of raw audio retained for re-analysis.
+    pub audio_seconds: f64,
     /// Bands in use: `[minHz, maxHz, fftSize]` per band, ascending.
     pub bands: Vec<(f64, f64, usize)>,
 }
@@ -172,6 +191,13 @@ struct SentView {
     rows_version: u64,
 }
 
+/// Progress of an incremental re-analysis of older audio, newest first.
+struct Reanalysis {
+    /// Ticks below this index still hold silence and need re-analysing.
+    next_end: u64,
+    analysers: Vec<Analyser>,
+}
+
 pub struct Engine {
     config: EngineConfig,
     /// One analyser per distinct window length, largest first.
@@ -181,7 +207,17 @@ pub struct Engine {
     /// Scratch: element-wise max of the ticks folded into one column.
     fold: Vec<u8>,
     history: History,
-    pending: Vec<f32>,
+    /// Raw audio, the source everything else is derived from.
+    audio: AudioRing,
+    /// Index into `audio` of the next sample to analyse.
+    analysed_to: u64,
+    /// Audio-sample index at which tick 0 of `history` starts.
+    history_origin: u64,
+    /// Scratch for feeding hops into the analysers.
+    hop_buf: Vec<f32>,
+    reanalysis: Option<Reanalysis>,
+    /// Tick range rewritten since the last frame, to be repainted.
+    dirty: Option<(u64, u64)>,
     rows: RowMap,
     rows_version: u64,
     lut: Vec<[u8; 3]>,
@@ -209,6 +245,7 @@ impl Engine {
         let lut = build_lut(config.coloring);
         let height = config.height;
         let history = History::new(layout.len, config.history_bytes);
+        let audio = AudioRing::new(config.audio_bytes / 4);
         Ok(Self {
             config,
             analysers,
@@ -216,7 +253,12 @@ impl Engine {
             fold: vec![0; layout.len],
             layout,
             history,
-            pending: Vec::new(),
+            audio,
+            analysed_to: 0,
+            history_origin: 0,
+            hop_buf: Vec::new(),
+            reanalysis: None,
+            dirty: None,
             rows,
             rows_version: 0,
             lut,
@@ -237,12 +279,13 @@ impl Engine {
         &self.config
     }
 
-    /// Apply a new configuration, rebuilding only what changed. Recorded
-    /// history is kept unless the FFT size or sample rate changes.
+    /// Apply a new configuration, rebuilding only what changed. When the
+    /// analysis itself changes (window sizes, bands, sample rate) the
+    /// retained audio is re-analysed so the display carries over.
     pub fn configure(&mut self, config: EngineConfig) -> Result<(), String> {
         config.validate()?;
         let old = std::mem::replace(&mut self.config, config);
-        let c = &self.config;
+        let c = self.config.clone();
         let layout = c.layout();
         let layout_changed = layout != self.layout;
         if layout_changed {
@@ -251,10 +294,16 @@ impl Engine {
             self.fold = vec![0; layout.len];
             self.layout = layout;
         }
-        if layout_changed || c.history_bytes != old.history_bytes {
+        if c.audio_bytes != old.audio_bytes {
+            self.audio = self.audio.resized(c.audio_bytes / 4);
+        }
+        let history_changed = layout_changed
+            || c.sample_rate != old.sample_rate
+            || c.history_bytes != old.history_bytes;
+        if history_changed {
             self.history = History::new(self.layout.len, c.history_bytes);
-            self.pending.clear();
             self.sent = None;
+            self.reanalyse();
         }
         let rows_changed = layout_changed
             || c.height != old.height
@@ -291,6 +340,7 @@ impl Engine {
             notes: self.pitches.iter().map(|p| p.label.clone()).collect(),
             ticks_per_second: self.config.ticks_per_second(),
             history_seconds: self.history.capacity() as f64 / self.config.ticks_per_second(),
+            audio_seconds: self.audio.capacity() as f64 / self.config.sample_rate,
             bands: self
                 .layout
                 .segments
@@ -310,12 +360,30 @@ impl Engine {
     }
 
     pub fn push_mono(&mut self, samples: &[f32]) {
-        self.pending.extend_from_slice(samples);
-        let max_pending = (self.config.sample_rate * MAX_PENDING_SECONDS) as usize;
-        if self.pending.len() > max_pending {
-            let excess = self.pending.len() - max_pending;
-            self.pending.drain(..excess);
+        self.audio.push(samples);
+        // If frames stopped being requested, skip ahead rather than analysing
+        // an unbounded backlog later.
+        let max_pending = (self.config.sample_rate * MAX_PENDING_SECONDS) as u64;
+        if self.audio.total() - self.analysed_to > max_pending {
+            self.skip_to(self.audio.total() - max_pending);
         }
+    }
+
+    /// Move the analysis cursor forward to `sample`, recording silent ticks
+    /// for the skipped span so history stays aligned with audio time.
+    fn skip_to(&mut self, sample: u64) {
+        let hop = self.config.hop() as u64;
+        let target_tick = (sample - self.history_origin) / hop;
+        let ticks_now = self.history.total();
+        if target_tick > ticks_now {
+            self.composite.iter_mut().for_each(|b| *b = 0);
+            let n = (target_tick - ticks_now).min(self.history.capacity() as u64);
+            for _ in 0..n {
+                self.history.push(&self.composite);
+            }
+            self.analysers.iter_mut().for_each(Analyser::clear);
+        }
+        self.analysed_to = self.history_origin + target_tick * hop;
     }
 
     pub fn push_interleaved(&mut self, samples: &[f32], channels: usize) {
@@ -335,8 +403,136 @@ impl Engine {
     pub fn clear(&mut self) {
         self.analysers.iter_mut().for_each(Analyser::clear);
         self.history.clear();
-        self.pending.clear();
+        self.audio.clear();
+        self.analysed_to = 0;
+        self.history_origin = 0;
+        self.reanalysis = None;
+        self.dirty = None;
         self.sent = None;
+    }
+
+    /// Whether older audio is still being re-analysed in the background.
+    pub fn reanalysis_pending(&self) -> bool {
+        self.reanalysis.is_some()
+    }
+
+    /// Rebuild the spectrum history from the retained audio under the
+    /// current layout. The newest [`SYNC_REANALYSIS_SECONDS`] are analysed
+    /// now; older ticks start as silence and are filled in by
+    /// [`Self::continue_reanalysis`] over later frames. Audio older than the
+    /// ring is silence but keeps its place in time.
+    fn reanalyse(&mut self) {
+        self.analysers.iter_mut().for_each(Analyser::clear);
+        let hop = self.config.hop() as u64;
+        let first = self.audio.first();
+        let newest = self.audio.total();
+        // Only what the history budget can hold.
+        let max_span = self.history.capacity() as u64 * hop;
+        let origin = first.max(newest.saturating_sub(max_span));
+        self.history_origin = origin;
+        let total_ticks = (newest - origin) / hop;
+        let sync_ticks = (SYNC_REANALYSIS_SECONDS * self.config.ticks_per_second()) as u64;
+        let sync_start = total_ticks.saturating_sub(sync_ticks);
+        self.history.push_silence(sync_start);
+        self.reanalysis = if sync_start > 0 {
+            Some(Reanalysis {
+                next_end: sync_start,
+                analysers: self
+                    .layout
+                    .fft_sizes()
+                    .into_iter()
+                    .map(Analyser::new)
+                    .collect(),
+            })
+        } else {
+            None
+        };
+        self.dirty = None;
+        let start = origin + sync_start * hop;
+        self.warm(start);
+        self.analysed_to = start;
+        self.process_pending();
+    }
+
+    /// Prime the live analysers with the window of audio preceding `start`.
+    fn warm(&mut self, start: u64) {
+        let warm = self
+            .analysers
+            .first()
+            .map_or(0, |a| a.fft_size() as u64)
+            .min(start - self.audio.first().min(start));
+        if warm > 0 {
+            let mut buf = vec![0.0f32; warm as usize];
+            self.audio.read(start - warm, &mut buf);
+            for a in &mut self.analysers {
+                a.push_mono(&buf);
+            }
+        }
+    }
+
+    /// Re-analyse up to `max_ticks` older ticks (newest first) and mark them
+    /// dirty. Returns how many were done.
+    pub fn continue_reanalysis(&mut self, max_ticks: u64) -> u64 {
+        let Some(mut job) = self.reanalysis.take() else {
+            return 0;
+        };
+        let hop = self.config.hop() as u64;
+        let origin = self.history_origin;
+        let end = job.next_end;
+        let start = end.saturating_sub(max_ticks.max(1));
+        // warm the job's analysers with the window before the chunk
+        let chunk_start = origin + start * hop;
+        let warm = job
+            .analysers
+            .first()
+            .map_or(0, |a| a.fft_size() as u64)
+            .min(chunk_start - self.audio.first().min(chunk_start));
+        job.analysers.iter_mut().for_each(Analyser::clear);
+        if warm > 0 {
+            let mut buf = vec![0.0f32; warm as usize];
+            self.audio.read(chunk_start - warm, &mut buf);
+            for a in &mut job.analysers {
+                a.push_mono(&buf);
+            }
+        }
+        self.hop_buf.resize(hop as usize, 0.0);
+        for tick in start..end {
+            self.audio.read(origin + tick * hop, &mut self.hop_buf);
+            for a in &mut job.analysers {
+                a.push_mono(&self.hop_buf);
+                if a.samples_since_analysis() >= a.fft_size() / ANALYSIS_OVERLAP_DIVISOR {
+                    a.byte_frequency_data();
+                }
+            }
+            let analysers = &job.analysers;
+            self.layout.compose(
+                |n| {
+                    analysers
+                        .iter()
+                        .find(|a| a.fft_size() == n)
+                        .expect("an analyser exists for every band")
+                        .bytes()
+                },
+                &mut self.composite,
+            );
+            self.history.set(tick, &self.composite);
+        }
+        self.dirty = Some(match self.dirty {
+            Some((lo, hi)) => (lo.min(start), hi.max(end)),
+            None => (start, end),
+        });
+        if start > 0 && start > self.history.first() {
+            job.next_end = start;
+            self.reanalysis = Some(job);
+        }
+        end - start
+    }
+
+    /// Length in seconds of the tick grid's origin offset within the audio
+    /// ring, for tests.
+    #[cfg(test)]
+    fn history_origin_seconds(&self) -> f64 {
+        self.history_origin as f64 / self.config.sample_rate
     }
 
     pub fn last_pitch(&self) -> PitchResult {
@@ -348,9 +544,14 @@ impl Engine {
     pub fn process_pending(&mut self) -> usize {
         let hop = self.config.hop();
         let mut ticks = 0;
-        let mut offset = 0;
-        while offset + hop <= self.pending.len() {
-            let chunk = &self.pending[offset..offset + hop];
+        if self.analysed_to < self.audio.first() {
+            // fell behind the ring: the gap is silence
+            self.skip_to(self.audio.first());
+        }
+        self.hop_buf.resize(hop, 0.0);
+        while self.analysed_to + hop as u64 <= self.audio.total() {
+            self.audio.read(self.analysed_to, &mut self.hop_buf);
+            let chunk = &self.hop_buf;
             for a in &mut self.analysers {
                 a.push_mono(chunk);
                 if a.samples_since_analysis() >= a.fft_size() / ANALYSIS_OVERLAP_DIVISOR {
@@ -369,21 +570,25 @@ impl Engine {
                 &mut self.composite,
             );
             self.history.push(&self.composite);
-            offset += hop;
+            self.analysed_to += hop as u64;
             ticks += 1;
-        }
-        if offset > 0 {
-            self.pending.drain(..offset);
         }
         ticks
     }
 
-    /// Oldest and newest recorded time in seconds.
+    /// Seconds of audio time at which history tick 0 starts.
+    fn origin_seconds(&self) -> f64 {
+        self.history_origin as f64 / self.config.sample_rate
+    }
+
+    /// Oldest and newest recorded time in seconds (audio time, so the
+    /// timeline keeps its position across re-analysis).
     pub fn history_span(&self) -> (f64, f64) {
         let tps = self.config.ticks_per_second();
+        let origin = self.origin_seconds();
         (
-            self.history.first() as f64 / tps,
-            self.history.total() as f64 / tps,
+            origin + self.history.first() as f64 / tps,
+            origin + self.history.total() as f64 / tps,
         )
     }
 
@@ -392,6 +597,9 @@ impl Engine {
         let fresh = self.process_pending() > 0;
         let height = self.config.height;
         let tps = self.config.ticks_per_second();
+        if self.reanalysis.is_some() {
+            self.continue_reanalysis((REANALYSIS_SECONDS_PER_FRAME * tps) as u64);
+        }
         let pps = if view.px_per_second.is_finite() && view.px_per_second > 0.0 {
             view.px_per_second
         } else {
@@ -447,18 +655,44 @@ impl Engine {
             }
             None => true,
         };
+        let origin = self.history_origin as f64 / self.config.sample_rate;
         let (shift, column_start, columns) = if full {
             (0i64, 0usize, width)
         } else {
             let shift = end_px - self.sent.map_or(end_px, |s| s.end_px);
-            if shift > 0 {
-                (shift, 0, shift as usize)
+            let (mut lo, mut hi) = if shift > 0 {
+                (0usize, shift as usize)
             } else if shift < 0 {
-                (shift, (width as i64 + shift) as usize, (-shift) as usize)
+                ((width as i64 + shift) as usize, width)
             } else {
-                (0, 0, 0)
+                (width, width) // empty
+            };
+            // Columns covering re-analysed ticks must be repainted too; the
+            // packet carries one block, so widen it to include them.
+            if let Some((t0, t1)) = self.dirty.take() {
+                let time_lo = origin + t0 as f64 / tps;
+                let time_hi = origin + t1 as f64 / tps;
+                let c_lo = (end_px as f64 - time_hi * pps).floor().max(0.0) as usize;
+                let c_hi = ((end_px as f64 - time_lo * pps).ceil() as usize + 1).min(width);
+                if c_lo < c_hi {
+                    if lo == width {
+                        lo = c_lo;
+                        hi = c_hi;
+                    } else {
+                        lo = lo.min(c_lo);
+                        hi = hi.max(c_hi);
+                    }
+                }
+            }
+            if lo < hi {
+                (shift, lo, hi - lo)
+            } else {
+                (shift, 0, 0)
             }
         };
+        if full {
+            self.dirty = None;
+        }
 
         // Render the timeline columns, row-major RGBA.
         self.packet.clear();
@@ -466,10 +700,10 @@ impl Engine {
         let (header, body) = self.packet.split_at_mut(packet::HEADER_LEN);
         let (pixels, live) = body.split_at_mut(columns * height * 4);
         for (x, col) in (column_start..column_start + columns).enumerate() {
-            let t_hi = (end_px - col as i64) as f64 / pps;
-            let t_lo = (end_px - col as i64 - 1) as f64 / pps;
+            let t_hi = (end_px - col as i64) as f64 / pps - origin;
+            let t_lo = (end_px - col as i64 - 1) as f64 / pps - origin;
             let first_tick = (t_lo * tps).floor().max(0.0) as u64;
-            let last_tick = ((t_hi * tps).ceil() as u64).max(first_tick + 1) - 1;
+            let last_tick = ((t_hi * tps).ceil().max(0.0) as u64).max(first_tick + 1) - 1;
             let last_tick = last_tick.min(first_tick + MAX_TICKS_PER_COLUMN as u64 - 1);
             // Fold the column's ticks together on the (small) composite
             // spectrum first, then map rows once.
@@ -741,28 +975,56 @@ mod tests {
     }
 
     #[test]
-    fn reconfigure_keeps_history_unless_fft_changes() {
+    fn reconfigure_keeps_history_and_reanalyses_on_fft_change() {
         let mut e = Engine::new(EngineConfig::default()).unwrap();
-        e.push_mono(&vec![0.0; 48000]);
+        // 1 s silence, 1 s of 440 Hz, 1 s silence
+        let mut audio = vec![0.0f32; 48000];
+        audio.extend(sine(48000, 440.0, 48000.0, 0.05));
+        audio.extend(vec![0.0f32; 48000]);
+        e.push_mono(&audio);
         e.frame(live_view(100, 60.0));
-        assert!((e.history_span().1 - 1.0).abs() < 0.01);
+        assert!((e.history_span().1 - 3.0).abs() < 0.01);
         let mut c = e.config().clone();
         c.labeling = Labeling::Linear;
         c.height = 1092;
         e.configure(c.clone()).unwrap();
-        assert!((e.history_span().1 - 1.0).abs() < 0.01);
+        assert!((e.history_span().1 - 3.0).abs() < 0.01);
         assert_eq!(e.label_strip().len(), LABEL_WIDTH * 1092 * 4);
+        // changing the window size re-analyses the retained audio
         c.fft_size = 16384;
         e.configure(c).unwrap();
-        assert_eq!(e.history_span().1, 0.0);
+        assert!(
+            (e.history_span().1 - 3.0).abs() < 0.01,
+            "{:?}",
+            e.history_span()
+        );
+        assert_eq!(e.history_origin_seconds(), 0.0);
+        let row = e.rows.hz.iter().position(|&h| h >= 440.0).unwrap();
+        let tps = e.config().ticks_per_second();
+        let at = |e: &Engine, t: f64| e.rows.value(row, e.history.get((t * tps) as u64).unwrap());
+        assert!(at(&e, 0.5) < 10.0, "silence at 0.5 s: {}", at(&e, 0.5));
+        assert!(at(&e, 1.7) > 100.0, "tone at 1.7 s: {}", at(&e, 1.7));
+        assert!(at(&e, 2.8) < 10.0, "silence at 2.8 s: {}", at(&e, 2.8));
+        // and again for a band-layout change
+        let mut c = e.config().clone();
+        c.bands = crate::spectrum::BandPreset::Sharp.bands();
+        e.configure(c).unwrap();
+        assert!((e.history_span().1 - 3.0).abs() < 0.01);
+        let tps = e.config().ticks_per_second();
+        let row = e.rows.hz.iter().position(|&h| h >= 440.0).unwrap();
+        let v = e
+            .rows
+            .value(row, e.history.get((1.7 * tps) as u64).unwrap());
+        assert!(v > 100.0, "tone after band change: {v}");
         let info = e.info();
         assert_eq!(info.fft_size, 16384);
-        // shortest window is 16384 / 8 = 2048; hop = 2048 / 4 = 512 samples
-        assert!((info.ticks_per_second - 93.75).abs() < 1e-9);
+        // Sharp: shortest window is 16384 / 32 = 512; hop = 128 -> 375/s
+        assert!((info.ticks_per_second - 375.0).abs() < 1e-9);
         assert!(info.history_seconds > 60.0);
-        assert_eq!(info.bands.len(), 4);
-        assert_eq!(info.bands[0], (0.0, 250.0, 16384));
-        assert_eq!(info.bands[3], (1000.0, 24000.0, 2048));
+        assert!(info.audio_seconds > 300.0);
+        assert_eq!(info.bands.len(), 6);
+        assert_eq!(info.bands[0], (0.0, 125.0, 16384));
+        assert_eq!(info.bands[5], (2000.0, 24000.0, 512));
         assert!(e
             .configure(EngineConfig {
                 fft_size: 1000,
@@ -896,12 +1158,99 @@ mod tests {
     }
 
     #[test]
+    fn long_recordings_reanalyse_incrementally_and_repaint() {
+        let mut e = Engine::new(EngineConfig::default()).unwrap();
+        // 30 s: tone for the first 10 s, silence, tone for the last 2 s
+        let mut audio = sine(48000 * 10, 440.0, 48000.0, 0.05);
+        audio.extend(vec![0.0f32; 48000 * 18]);
+        audio.extend(sine(48000 * 2, 440.0, 48000.0, 0.05));
+        for chunk in audio.chunks(48000) {
+            e.push_mono(chunk);
+            e.process_pending();
+        }
+        let view = live_view(600, 20.0); // 30 s across 600 px
+        e.frame(view);
+        let mut c = e.config().clone();
+        c.bands = crate::spectrum::BandPreset::Sharp.bands();
+        e.configure(c).unwrap();
+        assert!(e.reanalysis_pending());
+        let tps = e.config().ticks_per_second();
+        let row = e.rows.hz.iter().position(|&h| h >= 440.0).unwrap();
+        let at = |e: &Engine, t: f64| e.rows.value(row, e.history.get((t * tps) as u64).unwrap());
+        // newest seconds are ready at once, the old tone is still silence
+        assert!(at(&e, 29.0) > 100.0, "newest: {}", at(&e, 29.0));
+        assert!(at(&e, 5.0) == 0.0, "old: {}", at(&e, 5.0));
+        // first frame after a history rebuild is a full redraw
+        let p = parse(e.frame(view));
+        assert_ne!(p.flags & FLAG_FULL, 0);
+        let lit = |p: &Parsed, x: usize| {
+            let o = ((546 - 1 - row) * p.columns as usize + x) * 4;
+            p.pixels[o] > 0 || p.pixels[o + 1] > 0 || p.pixels[o + 2] > 0
+        };
+        // frames keep re-analysing older audio and repaint those columns;
+        // 26 s of backlog at 0.5 s per frame takes ~52 frames
+        let mut repainted_old_tone = false;
+        for _ in 0..80 {
+            if !e.reanalysis_pending() {
+                break;
+            }
+            let p = parse(e.frame(view));
+            // column for t = 5 s is 25 s back = 500 px from the newest edge
+            if p.columns > 0
+                && p.column_start as usize <= 500
+                && (p.column_start + p.columns) as usize > 500
+            {
+                let x = 500 - p.column_start as usize;
+                repainted_old_tone |= lit(&p, x);
+            }
+        }
+        assert!(!e.reanalysis_pending());
+        assert!(at(&e, 5.0) > 100.0, "old after job: {}", at(&e, 5.0));
+        assert!(at(&e, 15.0) == 0.0, "silence after job: {}", at(&e, 15.0));
+        assert!(
+            repainted_old_tone,
+            "the old tone's column was never repainted"
+        );
+        // idle again afterwards
+        let p = parse(e.frame(view));
+        assert_eq!(p.columns, 0);
+    }
+
+    #[test]
+    fn reanalysis_is_bounded_by_the_audio_ring() {
+        // tiny audio ring: 0.5 s; history is 2 s old when the layout changes
+        let mut e = Engine::new(EngineConfig {
+            audio_bytes: 48000 * 4 / 2,
+            ..Default::default()
+        })
+        .unwrap();
+        e.push_mono(&sine(48000 * 2, 440.0, 48000.0, 0.05));
+        e.frame(live_view(100, 60.0));
+        let mut c = e.config().clone();
+        c.bands = crate::spectrum::BandPreset::Single.bands();
+        e.configure(c).unwrap();
+        let (start, end) = e.history_span();
+        assert!((end - 2.0).abs() < 0.02, "end {end}");
+        assert!((start - 1.5).abs() < 0.02, "start {start}");
+        // the re-analysed part still shows the tone and the timeline is
+        // positioned in audio time, not restarted at zero
+        let row = e.rows.hz.iter().position(|&h| h >= 440.0).unwrap();
+        assert!(e.rows.value(row, e.history.latest().unwrap()) > 100.0);
+        let p = parse(e.frame(live_view(100, 60.0)));
+        assert!((p.history_end - 2.0).abs() < 0.02);
+        assert!((p.view_end - 2.0).abs() < 0.02);
+    }
+
+    #[test]
     fn hidden_window_does_not_accumulate_unbounded_audio() {
         let mut e = Engine::new(EngineConfig::default()).unwrap();
         for _ in 0..20 {
             e.push_mono(&vec![0.0; 48000]);
         }
-        assert!(e.pending.len() <= 48000 * 8);
+        assert!(e.audio.total() - e.analysed_to <= 48000 * 8);
+        // the skipped span is still accounted for in time
+        e.process_pending();
+        assert!((e.history_span().1 - 20.0).abs() < 0.05);
     }
 }
 
@@ -936,6 +1285,44 @@ mod bench {
                     el.as_secs_f64() / 5.0 * 100.0,
                     e.layout.len,
                     e.info().history_seconds
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reanalysis_bench {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn reanalysis_cost() {
+        for &fft in &[8192usize, 32768] {
+            let mut e = Engine::new(EngineConfig {
+                fft_size: fft,
+                ..Default::default()
+            })
+            .unwrap();
+            // fill the whole default audio ring (~5.8 min)
+            let chunk: Vec<f32> = (0..48000).map(|i| 0.1 * (i as f32 * 0.05).sin()).collect();
+            let seconds = e.info().audio_seconds as usize;
+            for _ in 0..seconds {
+                e.push_mono(&chunk);
+                e.process_pending();
+            }
+            for preset in [
+                crate::spectrum::BandPreset::Single,
+                crate::spectrum::BandPreset::Sharp,
+                crate::spectrum::BandPreset::Balanced,
+            ] {
+                let mut c = e.config().clone();
+                c.bands = preset.bands();
+                let t = std::time::Instant::now();
+                e.configure(c).unwrap();
+                eprintln!(
+                    "fft {fft:>5} -> {preset:?}: re-analysed {seconds} s of audio in {:?}",
+                    t.elapsed()
                 );
             }
         }

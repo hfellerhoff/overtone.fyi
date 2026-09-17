@@ -58,6 +58,28 @@ impl History {
         self.total += 1;
     }
 
+    /// Overwrite an existing tick in place. Returns false if it is not held.
+    pub fn set(&mut self, tick: u64, spectrum: &[u8]) -> bool {
+        if tick >= self.total || tick < self.first() {
+            return false;
+        }
+        let slot = (tick % self.capacity as u64) as usize * self.bin_count;
+        let dst = &mut self.data[slot..slot + self.bin_count];
+        let n = spectrum.len().min(self.bin_count);
+        dst[..n].copy_from_slice(&spectrum[..n]);
+        dst[n..].iter_mut().for_each(|b| *b = 0);
+        true
+    }
+
+    /// Append `n` silent ticks.
+    pub fn push_silence(&mut self, n: u64) {
+        let zeros = vec![0u8; self.bin_count];
+        for _ in 0..n.min(self.capacity as u64) {
+            self.push(&zeros);
+        }
+        self.total += n.saturating_sub(self.capacity as u64);
+    }
+
     pub fn get(&self, tick: u64) -> Option<&[u8]> {
         if tick >= self.total || tick < self.first() {
             return None;
@@ -95,6 +117,12 @@ mod tests {
         assert_eq!(h.latest(), Some(&[24, 24, 24, 0][..]));
         assert!(h.get(25).is_none());
         assert_eq!(h.data.len(), 40);
+        assert!(h.set(20, &[9, 9, 9, 9]));
+        assert_eq!(h.get(20), Some(&[9, 9, 9, 9][..]));
+        assert!(!h.set(3, &[1]));
+        h.push_silence(3);
+        assert_eq!(h.total(), 28);
+        assert_eq!(h.latest(), Some(&[0, 0, 0, 0][..]));
         h.clear();
         assert!(h.is_empty());
         assert!(h.latest().is_none());

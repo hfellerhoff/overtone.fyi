@@ -14,6 +14,7 @@
 //!    the frontend only has to blit.
 
 pub mod analyser;
+pub mod audio;
 pub mod color;
 pub mod engine;
 pub mod history;

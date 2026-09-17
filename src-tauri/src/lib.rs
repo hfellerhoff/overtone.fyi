@@ -47,6 +47,7 @@ impl DisplayConfig {
             labeling: self.labeling,
             range: self.range,
             history_bytes: overtone_core::engine::DEFAULT_HISTORY_BYTES,
+            audio_bytes: overtone_core::engine::DEFAULT_AUDIO_BYTES,
             bands: self.bands.bands(),
         }
     }

@@ -22,7 +22,13 @@ shortest window, at most 400 per second) the bands are stitched into one
 composite spectrum and recorded in a ring buffer (256 MB by default, about
 20 minutes at the default settings), independent of the display. Each band's
 FFT is only recomputed once a sixteenth of its window has arrived, and rows
-near a band boundary crossfade between the two bands. The React frontend (`src/`)
+near a band boundary crossfade between the two bands.
+
+The raw audio is retained as well (64 MB, about six minutes). When an
+analysis setting changes (resolution, bands, sample rate) the newest few
+seconds are re-analysed immediately and the rest is filled in over the
+following frames, so the display carries over instead of being cleared.
+The canvas is only ever a rendering of the recorded analysis. The React frontend (`src/`)
 never touches audio data. Each animation frame it asks the active backend
 (`src/engine/`) for the view it wants (timeline width, pixels per second,
 and where in time the newest edge sits) and blits the returned packet onto
