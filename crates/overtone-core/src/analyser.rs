@@ -32,6 +32,7 @@ pub struct Analyser {
     min_db: f32,
     max_db: f32,
     dirty: bool,
+    since_analysis: usize,
 }
 
 impl Analyser {
@@ -60,6 +61,7 @@ impl Analyser {
             min_db: MIN_DECIBELS,
             max_db: MAX_DECIBELS,
             dirty: true,
+            since_analysis: 0,
         }
     }
 
@@ -87,6 +89,7 @@ impl Analyser {
         self.ring.iter_mut().for_each(|s| *s = 0.0);
         self.magnitudes.iter_mut().for_each(|m| *m = 0.0);
         self.write_pos = 0;
+        self.since_analysis = 0;
         self.dirty = true;
     }
 
@@ -108,7 +111,13 @@ impl Analyser {
             self.ring[..rest].copy_from_slice(&src[first..]);
         }
         self.write_pos = (self.write_pos + src.len()) % n;
+        self.since_analysis = self.since_analysis.saturating_add(samples.len());
         self.dirty = true;
+    }
+
+    /// Samples pushed since the last [`Self::analyse`].
+    pub fn samples_since_analysis(&self) -> usize {
+        self.since_analysis
     }
 
     /// Append interleaved multi-channel samples; channels are averaged into
@@ -138,6 +147,7 @@ impl Analyser {
             return;
         }
         self.dirty = false;
+        self.since_analysis = 0;
         let n = self.fft_size;
         let wp = self.write_pos;
         // Unroll the ring so that time_buf holds the last n samples in order.

@@ -33,11 +33,11 @@ pub const MAX_PENDING_SECONDS: f64 = 8.0;
 /// Ticks folded into one timeline column are capped here when zoomed far out.
 pub const MAX_TICKS_PER_COLUMN: usize = 64;
 
-/// Samples between analysis ticks, derived from the shortest window in use
-/// so fast events in the treble are not skipped over.
-pub const fn hop(shortest_fft: usize) -> usize {
-    shortest_fft / 8
-}
+/// Ticks are never recorded faster than this; nothing above it is displayable.
+pub const MAX_TICKS_PER_SECOND: f64 = 400.0;
+/// Each band's FFT is recomputed once this fraction of its window has
+/// arrived (15/16 overlap), regardless of how often ticks happen.
+pub const ANALYSIS_OVERLAP_DIVISOR: usize = 16;
 
 fn default_history_bytes() -> usize {
     DEFAULT_HISTORY_BYTES
@@ -90,7 +90,9 @@ impl EngineConfig {
         Layout::build(self.sample_rate, self.fft_size, &self.bands)
     }
 
-    /// Samples between analysis ticks.
+    /// Samples between analysis ticks: a quarter of the shortest window so
+    /// treble events are not skipped, bounded by [`MAX_TICKS_PER_SECOND`] and
+    /// never coarser than 1/32 of the base window.
     pub fn hop(&self) -> usize {
         let shortest = self
             .bands
@@ -98,7 +100,8 @@ impl EngineConfig {
             .map(|b| self.fft_size / b.divisor)
             .min()
             .unwrap_or(self.fft_size);
-        hop(shortest).max(1)
+        let min_hop = (self.sample_rate / MAX_TICKS_PER_SECOND) as usize;
+        (shortest / 4).max(min_hop).min(self.fft_size / 32).max(32)
     }
 
     /// Analysis ticks per second.
@@ -175,6 +178,8 @@ pub struct Engine {
     analysers: Vec<Analyser>,
     layout: Layout,
     composite: Vec<u8>,
+    /// Scratch: element-wise max of the ticks folded into one column.
+    fold: Vec<u8>,
     history: History,
     pending: Vec<f32>,
     rows: RowMap,
@@ -208,6 +213,7 @@ impl Engine {
             config,
             analysers,
             composite: vec![0; layout.len],
+            fold: vec![0; layout.len],
             layout,
             history,
             pending: Vec::new(),
@@ -242,6 +248,7 @@ impl Engine {
         if layout_changed {
             self.analysers = layout.fft_sizes().into_iter().map(Analyser::new).collect();
             self.composite = vec![0; layout.len];
+            self.fold = vec![0; layout.len];
             self.layout = layout;
         }
         if layout_changed || c.history_bytes != old.history_bytes {
@@ -346,7 +353,9 @@ impl Engine {
             let chunk = &self.pending[offset..offset + hop];
             for a in &mut self.analysers {
                 a.push_mono(chunk);
-                a.byte_frequency_data();
+                if a.samples_since_analysis() >= a.fft_size() / ANALYSIS_OVERLAP_DIVISOR {
+                    a.byte_frequency_data();
+                }
             }
             let analysers = &self.analysers;
             self.layout.compose(
@@ -462,19 +471,24 @@ impl Engine {
             let first_tick = (t_lo * tps).floor().max(0.0) as u64;
             let last_tick = ((t_hi * tps).ceil() as u64).max(first_tick + 1) - 1;
             let last_tick = last_tick.min(first_tick + MAX_TICKS_PER_COLUMN as u64 - 1);
+            // Fold the column's ticks together on the (small) composite
+            // spectrum first, then map rows once.
             let mut any = false;
             for tick in first_tick..=last_tick {
                 if let Some(spectrum) = self.history.get(tick) {
                     if any {
-                        for (i, v) in self.column.iter_mut().enumerate() {
-                            *v = v.max(self.rows.value(i, spectrum));
+                        for (f, &v) in self.fold.iter_mut().zip(spectrum) {
+                            *f = (*f).max(v);
                         }
                     } else {
-                        for (i, v) in self.column.iter_mut().enumerate() {
-                            *v = self.rows.value(i, spectrum);
-                        }
+                        self.fold.copy_from_slice(spectrum);
                         any = true;
                     }
+                }
+            }
+            if any {
+                for (i, v) in self.column.iter_mut().enumerate() {
+                    *v = self.rows.value(i, &self.fold);
                 }
             }
             for y in 0..height {
@@ -743,8 +757,8 @@ mod tests {
         assert_eq!(e.history_span().1, 0.0);
         let info = e.info();
         assert_eq!(info.fft_size, 16384);
-        // shortest window is 16384 / 8 = 2048, hop = 256 samples
-        assert!((info.ticks_per_second - 187.5).abs() < 1e-9);
+        // shortest window is 16384 / 8 = 2048; hop = 2048 / 4 = 512 samples
+        assert!((info.ticks_per_second - 93.75).abs() < 1e-9);
         assert!(info.history_seconds > 60.0);
         assert_eq!(info.bands.len(), 4);
         assert_eq!(info.bands[0], (0.0, 250.0, 16384));
@@ -839,6 +853,46 @@ mod tests {
             divisor: 5,
         }];
         assert!(e.configure(c).is_err());
+    }
+
+    #[test]
+    fn hop_is_bounded_at_both_ends() {
+        let tps = |fft: usize, bands: Vec<Band>| {
+            EngineConfig {
+                fft_size: fft,
+                bands,
+                ..Default::default()
+            }
+            .ticks_per_second()
+        };
+        use crate::spectrum::BandPreset::*;
+        assert_eq!(tps(8192, Single.bands()), 187.5);
+        assert_eq!(tps(8192, Balanced.bands()), 187.5);
+        assert_eq!(tps(8192, Sharp.bands()), 400.0);
+        assert_eq!(tps(32768, Single.bands()), 46.875);
+        assert_eq!(tps(32768, Sharp.bands()), 187.5);
+        assert_eq!(tps(4096, Sharp.bands()), 400.0);
+    }
+
+    #[test]
+    fn big_windows_are_not_recomputed_every_tick() {
+        // 8k sharp: hop 120 samples, the 8192 analyser refreshes every 512
+        let mut e = Engine::new(EngineConfig {
+            bands: crate::spectrum::BandPreset::Sharp.bands(),
+            ..Default::default()
+        })
+        .unwrap();
+        e.push_mono(&sine(48000, 440.0, 48000.0, 0.05));
+        let t = std::time::Instant::now();
+        let ticks = e.process_pending();
+        let per_tick = t.elapsed().as_secs_f64() / ticks as f64;
+        assert_eq!(ticks, 400);
+        // generous bound (debug build): well under a millisecond per tick
+        assert!(per_tick < 2e-3, "{per_tick} s per tick");
+        // and the big band still produced data
+        let row = e.rows.hz.iter().position(|&h| h >= 110.0).unwrap();
+        let _ = row;
+        assert!(e.history.latest().unwrap().iter().any(|&b| b > 0));
     }
 
     #[test]

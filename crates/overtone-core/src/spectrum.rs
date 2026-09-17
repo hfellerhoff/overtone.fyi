@@ -8,6 +8,16 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Half-width of the crossfade zone at each band boundary, in octaves.
+/// Rows within this distance of a boundary blend the two bands so the
+/// change in window length does not show as a hard seam.
+pub const TRANSITION_OCTAVES: f64 = 1.0 / 6.0;
+
+/// `2 ^ TRANSITION_OCTAVES`.
+pub fn transition_ratio() -> f64 {
+    2f64.powf(TRANSITION_OCTAVES)
+}
+
 /// One frequency band and the window length it is analysed with.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,9 +178,17 @@ impl Layout {
             let fft_size = base_fft / band.divisor;
             let bin_hz = sample_rate / fft_size as f64;
             let bins = fft_size / 2;
-            // keep one bin of margin on each side for interpolation
-            let first_bin = ((lower / bin_hz).floor() as usize).saturating_sub(1);
-            let last_bin = ((upper / bin_hz).ceil() as usize + 1).min(bins - 1);
+            // Each band also carries the bins for the crossfade zones on
+            // either side, plus one bin of margin for interpolation.
+            let ratio = transition_ratio();
+            let lower_ext = if lower > 0.0 { lower / ratio } else { 0.0 };
+            let upper_ext = if band.max_hz.is_some() {
+                upper * ratio
+            } else {
+                upper
+            };
+            let first_bin = ((lower_ext / bin_hz).floor() as usize).saturating_sub(1);
+            let last_bin = ((upper_ext / bin_hz).ceil() as usize + 1).min(bins - 1);
             let bin_count = last_bin + 1 - first_bin;
             segments.push(Segment {
                 min_hz: lower,
@@ -205,6 +223,20 @@ impl Layout {
             .iter()
             .find(|s| hz < s.max_hz)
             .or_else(|| self.segments.last().filter(|s| hz <= s.max_hz))
+    }
+
+    /// If `hz` lies in the crossfade zone between two bands, the lower and
+    /// upper segments and the blend weight `t` (0 = all lower, 1 = all upper).
+    pub fn blend_at(&self, hz: f64) -> Option<(&Segment, &Segment, f64)> {
+        let ratio = transition_ratio();
+        for pair in self.segments.windows(2) {
+            let boundary = pair[0].max_hz;
+            if hz > boundary / ratio && hz < boundary * ratio {
+                let t = ((hz / boundary).ln() / ratio.ln() + 1.0) / 2.0;
+                return Some((&pair[0], &pair[1], t.clamp(0.0, 1.0)));
+            }
+        }
+        None
     }
 
     /// Distinct window lengths in use, largest first.
@@ -245,13 +277,33 @@ mod tests {
         }
         assert_eq!(l.len, l.segments.last().unwrap().end());
         // far fewer bytes than the base window's full spectrum
-        assert!(l.len < 2600, "{}", l.len);
+        assert!(l.len < 3000, "{}", l.len);
+        // bands overlap by the crossfade zone
+        let s1 = l.segments[1];
+        assert!(s1.first_bin as f64 * s1.bin_hz < 250.0 / transition_ratio());
+        assert!((s1.first_bin + s1.bin_count) as f64 * s1.bin_hz > 500.0 * transition_ratio());
         // lookups
         assert_eq!(l.segment_for(100.0).unwrap().fft_size, 32768);
         assert_eq!(l.segment_for(250.0).unwrap().fft_size, 16384);
         assert_eq!(l.segment_for(5000.0).unwrap().fft_size, 4096);
         assert_eq!(l.segment_for(24000.0).unwrap().fft_size, 4096);
         assert!(l.segment_for(24001.0).is_none());
+    }
+
+    #[test]
+    fn blend_zone_surrounds_each_boundary() {
+        let l = Layout::build(48000.0, 32768, &default_bands());
+        assert!(l.blend_at(200.0).is_none());
+        assert!(l.blend_at(320.0).is_none());
+        let (lo, hi, t) = l.blend_at(250.0).unwrap();
+        assert_eq!((lo.fft_size, hi.fft_size), (32768, 16384));
+        assert!((t - 0.5).abs() < 1e-9);
+        let (_, _, t) = l.blend_at(230.0).unwrap();
+        assert!(t > 0.1 && t < 0.2, "{t}");
+        let (_, _, t) = l.blend_at(275.0).unwrap();
+        assert!(t > 0.8 && t < 0.95, "{t}");
+        let (lo, hi, _) = l.blend_at(1000.0).unwrap();
+        assert_eq!((lo.fft_size, hi.fft_size), (8192, 4096));
     }
 
     #[test]

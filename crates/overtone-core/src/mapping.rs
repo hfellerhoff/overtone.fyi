@@ -4,7 +4,7 @@
 //! only in the range they show by default. The view can be zoomed to any
 //! sub-range (see [`FreqRange`]).
 
-use crate::spectrum::Layout;
+use crate::spectrum::{Layout, Segment};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,16 +114,75 @@ impl FreqRange {
     }
 }
 
-/// How a row reads the spectrum.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// How a row reads the composite spectrum.
+#[derive(Clone, Debug, PartialEq)]
 pub enum RowBins {
     /// The row is narrower than a bin: interpolate between bin `k` and `k + 1`
     /// with weight `frac` on the upper bin.
     Interpolate { k: usize, frac: f32 },
     /// The row spans several bins: take the loudest of `lo..=hi`.
     Max { lo: usize, hi: usize },
+    /// The row is in the crossfade zone between two bands: blend the lower
+    /// band's reading with the upper band's, weight `t` on the upper.
+    Blend {
+        parts: Box<(RowBins, RowBins)>,
+        t: f32,
+    },
     /// Outside the spectrum.
     None,
+}
+
+impl RowBins {
+    /// Read this row from a composite spectrum, 0..=255.
+    #[inline]
+    pub fn eval(&self, spectrum: &[u8]) -> f32 {
+        match self {
+            RowBins::Interpolate { k, frac } => {
+                let a = spectrum.get(*k).copied().unwrap_or(0) as f32;
+                let b = spectrum.get(k + 1).copied().unwrap_or(0) as f32;
+                a + (b - a) * frac
+            }
+            RowBins::Max { lo, hi } => spectrum
+                .get(*lo..=*hi)
+                .map_or(0, |s| s.iter().copied().max().unwrap_or(0))
+                as f32,
+            RowBins::Blend { parts, t } => {
+                let a = parts.0.eval(spectrum);
+                let b = parts.1.eval(spectrum);
+                a + (b - a) * t
+            }
+            RowBins::None => 0.0,
+        }
+    }
+}
+
+/// Bins of `seg` that a row spanning `lo_hz..hi_hz` (centre `centre`) reads.
+fn bins_in(seg: &Segment, lo_hz: f64, hi_hz: f64, centre: f64) -> RowBins {
+    // composite indices of the bins whose centre lies inside the row,
+    // clamped to the segment this row belongs to
+    let lo_bin = seg.position(lo_hz).ceil().max(seg.offset as f64) as usize;
+    let hi_bin = (seg.position(hi_hz).ceil() as usize)
+        .saturating_sub(1)
+        .min(seg.end() - 1);
+    if hi_bin > lo_bin {
+        return RowBins::Max {
+            lo: lo_bin,
+            hi: hi_bin,
+        };
+    }
+    let pos = seg.position(centre);
+    if pos < seg.offset as f64 {
+        return RowBins::None;
+    }
+    let k = pos.floor() as usize;
+    if k + 1 < seg.end() {
+        RowBins::Interpolate {
+            k,
+            frac: (pos - k as f64) as f32,
+        }
+    } else {
+        RowBins::None
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -148,32 +207,18 @@ impl RowMap {
             let hi_hz = edges[i + 1];
             let centre = (lo_hz * hi_hz).sqrt();
             hz.push(centre);
-            let Some(seg) = layout.segment_for(centre) else {
-                bins.push(RowBins::None);
-                continue;
-            };
-            // composite indices of the bins whose centre lies inside the row,
-            // clamped to the segment this row belongs to
-            let lo_bin = seg.position(lo_hz).ceil().max(seg.offset as f64) as usize;
-            let hi_bin = (seg.position(hi_hz).ceil() as usize)
-                .saturating_sub(1)
-                .min(seg.end() - 1);
-            let row = if hi_bin > lo_bin {
-                RowBins::Max {
-                    lo: lo_bin,
-                    hi: hi_bin,
-                }
-            } else {
-                let pos = seg.position(centre);
-                let k = pos.floor() as usize;
-                if k + 1 < seg.end() && k >= seg.offset {
-                    RowBins::Interpolate {
-                        k,
-                        frac: (pos - k as f64) as f32,
-                    }
-                } else {
-                    RowBins::None
-                }
+            let row = match layout.blend_at(centre) {
+                Some((low, high, t)) => RowBins::Blend {
+                    parts: Box::new((
+                        bins_in(low, lo_hz, hi_hz, centre),
+                        bins_in(high, lo_hz, hi_hz, centre),
+                    )),
+                    t: t as f32,
+                },
+                None => match layout.segment_for(centre) {
+                    Some(seg) => bins_in(seg, lo_hz, hi_hz, centre),
+                    None => RowBins::None,
+                },
             };
             bins.push(row);
         }
@@ -192,18 +237,7 @@ impl RowMap {
     /// Value of one row from a composite byte spectrum, 0..=255.
     #[inline]
     pub fn value(&self, i: usize, spectrum: &[u8]) -> f32 {
-        match self.bins[i] {
-            RowBins::Interpolate { k, frac } => {
-                let a = spectrum.get(k).copied().unwrap_or(0) as f32;
-                let b = spectrum.get(k + 1).copied().unwrap_or(0) as f32;
-                a + (b - a) * frac
-            }
-            RowBins::Max { lo, hi } => spectrum
-                .get(lo..=hi)
-                .map_or(0, |s| s.iter().copied().max().unwrap_or(0))
-                as f32,
-            RowBins::None => 0.0,
-        }
+        self.bins[i].eval(spectrum)
     }
 }
 
@@ -254,16 +288,16 @@ mod tests {
         let bin = 48000.0 / 8192.0;
         assert_eq!(map.height(), 1092);
         for i in 0..map.height() {
-            match map.bins[i] {
+            match &map.bins[i] {
                 RowBins::Interpolate { k, frac } => {
-                    let pos = k as f64 + frac as f64;
+                    let pos = *k as f64 + *frac as f64;
                     assert!((pos * bin - map.hz[i]).abs() < 0.01, "row {i}");
                 }
                 RowBins::Max { lo, hi } => {
-                    assert!(lo as f64 * bin >= map.edges[i] - 1e-9, "row {i}");
-                    assert!(hi as f64 * bin < map.edges[i + 1] + 1e-9, "row {i}");
+                    assert!(*lo as f64 * bin >= map.edges[i] - 1e-9, "row {i}");
+                    assert!(*hi as f64 * bin < map.edges[i + 1] + 1e-9, "row {i}");
                 }
-                RowBins::None => panic!("row {i} out of range"),
+                other => panic!("row {i}: unexpected {other:?}"),
             }
         }
         // low rows are narrower than a bin, high rows span several
@@ -278,25 +312,69 @@ mod tests {
     fn multi_resolution_rows_read_their_bands_segment() {
         let layout = Layout::build(48000.0, 32768, &crate::spectrum::default_bands());
         let map = RowMap::build(FreqRange::new(30.0, 20000.0), 800, &layout);
-        for i in 0..map.height() {
-            let seg = layout.segment_for(map.hz[i]).unwrap();
-            let (lo, hi) = match map.bins[i] {
-                RowBins::Interpolate { k, .. } => (k, k + 1),
-                RowBins::Max { lo, hi } => (lo, hi),
-                RowBins::None => panic!("row {i} unmapped"),
-            };
+        fn span(b: &RowBins) -> (usize, usize) {
+            match b {
+                RowBins::Interpolate { k, .. } => (*k, k + 1),
+                RowBins::Max { lo, hi } => (*lo, *hi),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        let check = |seg: &Segment, b: &RowBins, hz: f64, i: usize| {
+            let (lo, hi) = span(b);
             assert!(
                 lo >= seg.offset && hi < seg.end(),
-                "row {i} ({} Hz) outside its segment",
-                map.hz[i]
+                "row {i} ({hz} Hz) outside its segment"
             );
             // the bin actually read sits at the row's frequency
             let hz_of = |idx: usize| (idx - seg.offset + seg.first_bin) as f64 * seg.bin_hz;
             assert!(
-                hz_of(lo) <= map.hz[i] + seg.bin_hz && hz_of(hi) >= map.hz[i] - seg.bin_hz,
+                hz_of(lo) <= hz + seg.bin_hz && hz_of(hi) >= hz - seg.bin_hz,
                 "row {i}"
             );
+        };
+        let mut blended = 0;
+        for i in 0..map.height() {
+            let hz = map.hz[i];
+            match &map.bins[i] {
+                RowBins::Blend { parts, t } => {
+                    let (low, high, expected_t) = layout.blend_at(hz).unwrap();
+                    assert!((*t as f64 - expected_t).abs() < 1e-6);
+                    check(low, &parts.0, hz, i);
+                    check(high, &parts.1, hz, i);
+                    blended += 1;
+                }
+                RowBins::None => panic!("row {i} unmapped"),
+                other => check(layout.segment_for(hz).unwrap(), other, hz, i),
+            }
         }
+        // three boundaries, each blended over a third of an octave
+        let rows_per_octave = 800.0 / (20000f64 / 30.0).log2();
+        assert!(
+            (blended as f64 - rows_per_octave).abs() < 6.0,
+            "{blended} blended rows"
+        );
+    }
+
+    #[test]
+    fn blended_rows_crossfade_between_bands() {
+        let layout = Layout::build(48000.0, 32768, &crate::spectrum::default_bands());
+        // lower band reads 200 everywhere, upper band reads 100 everywhere
+        let mut spectrum = vec![0u8; layout.len];
+        for s in &layout.segments {
+            let v = if s.fft_size == 32768 { 200 } else { 100 };
+            spectrum[s.offset..s.end()].iter_mut().for_each(|b| *b = v);
+        }
+        let map = RowMap::build(FreqRange::new(200.0, 320.0), 300, &layout);
+        let values: Vec<f32> = (0..300).map(|i| map.value(i, &spectrum)).collect();
+        assert_eq!(values[0], 200.0);
+        assert_eq!(values[299], 100.0);
+        // monotone, gradual descent through the zone around 250 Hz
+        for w in values.windows(2) {
+            assert!(w[1] <= w[0] + 1e-3, "{w:?}");
+            assert!(w[0] - w[1] < 6.0, "step too large: {w:?}");
+        }
+        let mid = map.hz.iter().position(|&h| h >= 250.0).unwrap();
+        assert!((values[mid] - 150.0).abs() < 5.0, "{}", values[mid]);
     }
 
     #[test]
@@ -307,7 +385,7 @@ mod tests {
             &Layout::single(48000.0, 1024),
         );
         let mut spectrum = vec![0u8; 512];
-        let RowBins::Max { lo, hi } = map.bins[50] else {
+        let RowBins::Max { lo, hi } = map.bins[50].clone() else {
             panic!("expected a wide row");
         };
         spectrum[lo] = 10;
@@ -320,7 +398,7 @@ mod tests {
         );
         assert!(matches!(map.bins[0], RowBins::Interpolate { .. }));
         let mut spectrum = vec![0u8; 4096];
-        let RowBins::Interpolate { k, frac } = map.bins[0] else {
+        let RowBins::Interpolate { k, frac } = map.bins[0].clone() else {
             unreachable!()
         };
         spectrum[k] = 100;
