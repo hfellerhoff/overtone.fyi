@@ -117,8 +117,9 @@ export default function FFTCanvas() {
 
   /**
    * Click and drag on the spectrogram: vertical movement pans the frequency
-   * range, horizontal movement scrolls through time. The point under the
-   * cursor follows the cursor.
+   * range, horizontal movement scrolls through time. Dragging moves the
+   * view, not the content: drag up to see higher frequencies, drag right to
+   * move forward in time.
    */
   const drag = useRef<{
     id: number;
@@ -150,13 +151,13 @@ export default function FFTCanvas() {
         const range = v.range ?? current.range;
         const next = { ...v };
         if (dy !== 0) {
-          // dragging down moves the content down, i.e. shows higher frequencies
-          next.range = panRange(range, dy / rect.height, nyquist);
+          // dragging up shows higher frequencies
+          next.range = panRange(range, -dy / rect.height, nyquist);
         }
         if (dx !== 0) {
-          // dragging right moves the content right, i.e. shows earlier time
+          // dragging right moves forward in time
           const end = v.viewEnd ?? historyEndRef.current;
-          next.viewEnd = end - seconds;
+          next.viewEnd = end + seconds;
         }
         return next;
       });

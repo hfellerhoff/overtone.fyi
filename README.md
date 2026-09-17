@@ -38,7 +38,7 @@ that changed, or a full redraw after a zoom.
 |-------|--------|
 | Space | Start / stop capture (the recording is kept) |
 | Clear tile | Forget the recording |
-| Click and drag on the spectrogram | Pan the frequency range (vertical) and scroll through time (horizontal) |
+| Click and drag on the spectrogram | Drag up for higher frequencies, drag right to move forward in time |
 | Wheel or pinch over the spectrogram | Zoom the frequency range around the cursor |
 | Shift + wheel, or horizontal wheel / swipe | Scroll backward and forward in time |
 | Alt + wheel | Pan the frequency range |
