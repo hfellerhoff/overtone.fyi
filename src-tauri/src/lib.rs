@@ -7,6 +7,7 @@ pub mod capture;
 
 use capture::{Capture, DeviceInfo};
 use overtone_core::engine::{EngineConfig, EngineInfo};
+use overtone_core::mapping::FreqRange;
 use overtone_core::{Coloring, Engine, Labeling, Scale};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,8 @@ pub struct DisplayConfig {
     pub scale: Scale,
     pub coloring: Coloring,
     pub labeling: Labeling,
+    #[serde(default)]
+    pub range: Option<FreqRange>,
 }
 
 impl DisplayConfig {
@@ -35,6 +38,7 @@ impl DisplayConfig {
             scale: self.scale,
             coloring: self.coloring,
             labeling: self.labeling,
+            range: self.range,
         }
     }
 }

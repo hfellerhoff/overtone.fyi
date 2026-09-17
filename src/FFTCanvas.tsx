@@ -143,11 +143,7 @@ export default function FFTCanvas() {
           />
         </div>
         <div className="relative w-full h-full overflow-hidden">
-          <FrequencyMarkers
-            canvas={timeSeriesCanvasRef.current}
-            canvasHeight={canvasHeight}
-            markers={info?.markers ?? []}
-          />
+          <FrequencyMarkers markers={info?.markers ?? []} />
           <canvas
             ref={timeSeriesCanvasRef}
             className="w-full h-full bg-black border rounded-lg border-input"

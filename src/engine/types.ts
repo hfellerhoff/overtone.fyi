@@ -9,6 +9,20 @@ export interface DisplayConfig {
   scale: AnalyzerScale;
   coloring: ColoringMethod;
   labeling: FrequencyLabelMethod;
+  /** Visible frequency range; omit for the scale's preset. */
+  range?: FreqRange | null;
+}
+
+export interface FreqRange {
+  minHz: number;
+  maxHz: number;
+}
+
+export interface Marker {
+  hz: number;
+  label: string;
+  /** Position from the bottom of the canvas, 0..1. */
+  fraction: number;
 }
 
 /** Mirrors `EngineInfo` in Rust. */
@@ -18,8 +32,9 @@ export interface EngineInfo {
   sampleRate: number;
   labelWidth: number;
   liveWidth: number;
-  /** `[roundedHz, rowIndex]`, highest row first. */
-  markers: [number, number][];
+  range: FreqRange;
+  /** Highest first. */
+  markers: Marker[];
   notes: string[];
 }
 

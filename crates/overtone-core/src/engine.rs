@@ -3,8 +3,8 @@
 
 use crate::analyser::Analyser;
 use crate::color::{build_lut, lut_index, Coloring};
-use crate::labels::{render_label_strip, Labeling};
-use crate::mapping::{RowMap, Scale};
+use crate::labels::{frequency_markers, render_label_strip, Labeling, Marker};
+use crate::mapping::{FreqRange, RowMap, Scale};
 use crate::packet::{self, Header, FLAG_NEW_AUDIO};
 use crate::pitch::{
     detect_pitch, overtone_buckets, pitch_table, spectral_peaks, Bucket, Pitch, PitchResult,
@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 pub const LABEL_WIDTH: usize = 64;
 /// Width of the live spectrum panel in pixels (256 + 16).
 pub const LIVE_WIDTH: usize = 272;
-/// A frequency marker label is emitted every this many rows.
-pub const FREQUENCY_MARKER_DISTANCE: usize = 25;
+/// Minimum spacing between frequency markers, as a fraction of the height.
+pub const MARKER_MIN_GAP: f64 = 0.028;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +28,18 @@ pub struct EngineConfig {
     pub scale: Scale,
     pub coloring: Coloring,
     pub labeling: Labeling,
+    /// Visible frequency range; `None` uses the scale's preset.
+    #[serde(default)]
+    pub range: Option<FreqRange>,
+}
+
+impl EngineConfig {
+    /// The range actually shown, clamped to sane limits.
+    pub fn effective_range(&self) -> FreqRange {
+        self.range
+            .unwrap_or_else(|| FreqRange::preset(self.scale, self.sample_rate))
+            .clamped(self.sample_rate)
+    }
 }
 
 impl Default for EngineConfig {
@@ -39,6 +51,7 @@ impl Default for EngineConfig {
             scale: Scale::Piano,
             coloring: Coloring::Detailed,
             labeling: Labeling::Piano,
+            range: None,
         }
     }
 }
@@ -68,8 +81,10 @@ pub struct EngineInfo {
     pub sample_rate: f64,
     pub label_width: usize,
     pub live_width: usize,
-    /// `[roundedHz, rowIndex]` pairs, highest row first (like the original).
-    pub markers: Vec<(i64, usize)>,
+    /// Visible frequency range (bottom row to top row).
+    pub range: FreqRange,
+    /// Frequency markers, highest first.
+    pub markers: Vec<Marker>,
     /// Note labels indexed by the packet's `note` field.
     pub notes: Vec<String>,
 }
@@ -94,20 +109,14 @@ impl Engine {
         config.validate()?;
         let analyser = Analyser::new(config.fft_size);
         let rows = RowMap::build(
-            config.scale,
+            config.effective_range(),
             config.height,
             config.sample_rate,
             config.fft_size,
         );
         let pitches = pitch_table();
         let mut label_strip = Vec::new();
-        render_label_strip(
-            &rows.start_hz,
-            &pitches,
-            config.labeling,
-            LABEL_WIDTH,
-            &mut label_strip,
-        );
+        render_label_strip(&rows, config.labeling, LABEL_WIDTH, &mut label_strip);
         let lut = build_lut(config.coloring);
         let height = config.height;
         Ok(Self {
@@ -142,18 +151,12 @@ impl Engine {
         let rows_changed = c.fft_size != old.fft_size
             || c.sample_rate != old.sample_rate
             || c.height != old.height
-            || c.scale != old.scale;
+            || c.effective_range() != old.effective_range();
         if rows_changed {
-            self.rows = RowMap::build(c.scale, c.height, c.sample_rate, c.fft_size);
+            self.rows = RowMap::build(c.effective_range(), c.height, c.sample_rate, c.fft_size);
         }
         if rows_changed || c.labeling != old.labeling {
-            render_label_strip(
-                &self.rows.start_hz,
-                &self.pitches,
-                c.labeling,
-                LABEL_WIDTH,
-                &mut self.label_strip,
-            );
+            render_label_strip(&self.rows, c.labeling, LABEL_WIDTH, &mut self.label_strip);
         }
         if c.coloring != old.coloring {
             self.lut = build_lut(c.coloring);
@@ -166,21 +169,14 @@ impl Engine {
     }
 
     pub fn info(&self) -> EngineInfo {
-        let mut markers: Vec<(i64, usize)> = self
-            .rows
-            .start_hz
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| i % FREQUENCY_MARKER_DISTANCE == 0)
-            .map(|(i, hz)| (crate::color::js_round(*hz) as i64, i))
-            .collect();
-        markers.reverse();
+        let markers = frequency_markers(&self.rows, MARKER_MIN_GAP);
         EngineInfo {
             height: self.config.height,
             fft_size: self.config.fft_size,
             sample_rate: self.config.sample_rate,
             label_width: LABEL_WIDTH,
             live_width: LIVE_WIDTH,
+            range: self.rows.range,
             markers,
             notes: self.pitches.iter().map(|p| p.label.clone()).collect(),
         }
@@ -281,25 +277,18 @@ fn render_frame(
     packet: &mut [u8],
 ) -> PitchResult {
     let height = config.height;
-    let byte = |k: usize| bytes.get(k).copied().unwrap_or(0) as f32;
 
-    // 1. row amplitudes: mean of the two nearest bins (port of getHzDataArray)
+    // 1. row amplitudes
     for (i, v) in values.iter_mut().enumerate() {
-        *v = match rows.bins[i] {
-            Some(b) => (byte(b) + byte(b + 1)) * 0.5,
-            None => 0.0,
-        };
+        *v = rows.value(i, bytes);
     }
 
-    // 2. spectral peaks within the displayed range → overtone buckets → pitch
+    // 2. spectral peaks within the scale's range → overtone buckets → pitch.
+    //    The preset (not the zoomed) range is used so zooming the display
+    //    does not change what the pitch detector listens to.
     let bin_hz = crate::mapping::bin_hz(config.sample_rate, config.fft_size);
-    let min_hz = rows.start_hz.first().copied().unwrap_or(0.0);
-    let max_hz = rows
-        .start_hz
-        .last()
-        .copied()
-        .unwrap_or(config.sample_rate / 2.0);
-    spectral_peaks(bytes, bin_hz, min_hz, max_hz, peaks);
+    let detect = FreqRange::preset(config.scale, config.sample_rate);
+    spectral_peaks(bytes, bin_hz, detect.min_hz, detect.max_hz, peaks);
     overtone_buckets(peaks, buckets);
     let pitch = detect_pitch(pitches, buckets);
 
@@ -317,11 +306,9 @@ fn render_frame(
     .write(packet);
 
     let (column, live) = packet[packet::column_offset()..].split_at_mut(height * 4);
-    // canvas row y shows analysis row i = height - y; y = 0 is never drawn
-    column[..4].copy_from_slice(&[0, 0, 0, 255]);
-    live[..4].copy_from_slice(&0f32.to_le_bytes());
-    for y in 1..height {
-        let v = values[height - y];
+    // canvas row y (0 = top) shows analysis row i = height - 1 - y
+    for y in 0..height {
+        let v = values[height - 1 - y];
         let px = &mut column[y * 4..y * 4 + 4];
         if v > 0.0 {
             px[..3].copy_from_slice(&lut[lut_index(v)]);
@@ -379,8 +366,8 @@ mod tests {
             .enumerate()
             .max_by(|a, b| a.1.total_cmp(b.1))
             .unwrap();
-        let hz = e.rows.start_hz[row];
-        assert!((hz - 440.0).abs() < 12.0, "row hz {hz}");
+        let hz = e.rows.hz[row];
+        assert!((hz - 440.0).abs() < 6.0, "row hz {hz}");
         assert_eq!(p[16..20], FLAG_NEW_AUDIO.to_le_bytes());
     }
 
@@ -404,6 +391,27 @@ mod tests {
     }
 
     #[test]
+    fn log_scale_stops_at_20k_and_zoom_range_is_honoured() {
+        let mut e = Engine::new(EngineConfig {
+            scale: Scale::Logarithmic,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(e.info().range, FreqRange::new(20.0, 20000.0));
+        let mut c = e.config().clone();
+        c.range = Some(FreqRange::new(400.0, 800.0));
+        e.configure(c).unwrap();
+        let info = e.info();
+        assert_eq!(info.range, FreqRange::new(400.0, 800.0));
+        assert!((e.rows.hz[0] - 400.0).abs() < 1.0);
+        // pitch detection still listens to the whole preset range
+        e.push_mono(&sine(8192, 110.0, 48000.0, 0.05));
+        let p = e.frame().to_vec();
+        let pitch_hz = f32::from_le_bytes(p[20..24].try_into().unwrap());
+        assert!((pitch_hz - 110.0).abs() < 1.0, "pitch {pitch_hz}");
+    }
+
+    #[test]
     fn reconfigure_updates_derived_tables() {
         let mut e = Engine::new(EngineConfig::default()).unwrap();
         let strip_before = e.label_strip().to_vec();
@@ -416,9 +424,9 @@ mod tests {
         assert_eq!(e.label_strip().len(), LABEL_WIDTH * 1092 * 4);
         assert_eq!(e.frame().len(), packet::packet_len(1092));
         let info = e.info();
-        assert_eq!(info.markers.len(), 44);
-        assert_eq!(info.markers.last().unwrap().1, 0);
-        assert!(info.markers[0].1 > info.markers[1].1);
+        assert!(info.markers.len() > 10);
+        assert!(info.markers[0].fraction > info.markers[1].fraction);
+        assert!((info.range.max_hz - 9397.27).abs() < 0.01);
         assert!(e
             .configure(EngineConfig {
                 fft_size: 1000,

@@ -1,22 +1,32 @@
-//! Maps every output pixel row to a start frequency and to the FFT bins it
-//! reads from. This is a direct port of `getHzDataArray` from the original
-//! web implementation, so the on-screen result is unchanged.
+//! Maps every output pixel row to a frequency and to the FFT bins it reads.
+//!
+//! Both scales place frequency logarithmically over the rows; they differ
+//! only in the range they show by default. The view can be zoomed to any
+//! sub-range (see [`FreqRange`]).
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scale {
+    /// Piano range: D1 (36.7 Hz) up to just below C#9 (9.4 kHz).
     Piano,
+    /// Full audible range, 20 Hz to 20 kHz (or Nyquist if lower).
     Logarithmic,
 }
 
-/// Number of piano notes spread across the canvas height.
+/// Number of piano notes spanned by the piano preset.
 pub const NOTES: f64 = 96.0;
-/// The note number shown at the bottom row of the canvas.
+/// The piano-key number at the bottom of the piano preset.
 pub const BASE_NOTE: f64 = 6.0;
 pub const REFERENCE_HZ: f64 = 440.0;
 pub const REFERENCE_NOTE_NUMBER: f64 = 49.0;
+pub const LOG_MIN_HZ: f64 = 20.0;
+pub const LOG_MAX_HZ: f64 = 20_000.0;
+/// Hard limits for zooming.
+pub const ABSOLUTE_MIN_HZ: f64 = 10.0;
+/// Smallest visible span, as a ratio max/min (a major third).
+pub const MIN_SPAN_RATIO: f64 = 1.26;
 
 pub fn semitone_factor() -> f64 {
     2f64.powf(1.0 / 12.0)
@@ -27,101 +37,172 @@ pub fn pitch_by_number(pitch_number: f64) -> f64 {
     REFERENCE_HZ * semitone_factor().powf(pitch_number - REFERENCE_NOTE_NUMBER)
 }
 
-pub fn piano_pixel_start(pixel_index: usize, pixel_count: usize) -> f64 {
-    let note_pixel_distance = pixel_count as f64 / NOTES;
-    let adjusted_pixel_index = BASE_NOTE * note_pixel_distance + pixel_index as f64;
-    pitch_by_number(adjusted_pixel_index / note_pixel_distance)
+/// Fractional piano key number of `hz` (A4 = 49.0).
+pub fn note_number(hz: f64) -> f64 {
+    12.0 * (hz / REFERENCE_HZ).log2() + REFERENCE_NOTE_NUMBER
 }
 
-pub fn logarithmic_pixel_start(max_hz: f64, pixel_count: usize, pixel_number: usize) -> f64 {
-    let p = pixel_number as f64;
-    (pixel_count as f64 / max_hz) * (p * p)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreqRange {
+    pub min_hz: f64,
+    pub max_hz: f64,
 }
 
-pub fn pixel_start(scale: Scale, max_hz: f64, height: usize, i: usize) -> f64 {
-    match scale {
-        Scale::Piano => piano_pixel_start(i, height),
-        Scale::Logarithmic => logarithmic_pixel_start(max_hz, height, i),
+impl FreqRange {
+    pub fn new(min_hz: f64, max_hz: f64) -> Self {
+        Self { min_hz, max_hz }
+    }
+
+    /// Default range for a scale, limited by the Nyquist frequency.
+    pub fn preset(scale: Scale, sample_rate: f64) -> Self {
+        let nyquist = sample_rate / 2.0;
+        let (min, max) = match scale {
+            Scale::Piano => (
+                pitch_by_number(BASE_NOTE),
+                pitch_by_number(BASE_NOTE + NOTES),
+            ),
+            Scale::Logarithmic => (LOG_MIN_HZ, LOG_MAX_HZ),
+        };
+        Self::new(min, max.min(nyquist))
+    }
+
+    /// Clamp to the hard limits, keeping the span at least [`MIN_SPAN_RATIO`].
+    pub fn clamped(self, sample_rate: f64) -> Self {
+        let nyquist = sample_rate / 2.0;
+        let mut min = if self.min_hz.is_finite() {
+            self.min_hz
+        } else {
+            ABSOLUTE_MIN_HZ
+        };
+        let mut max = if self.max_hz.is_finite() {
+            self.max_hz
+        } else {
+            nyquist
+        };
+        min = min.clamp(ABSOLUTE_MIN_HZ, nyquist / MIN_SPAN_RATIO);
+        max = max.clamp(ABSOLUTE_MIN_HZ * MIN_SPAN_RATIO, nyquist);
+        if max / min < MIN_SPAN_RATIO {
+            let centre = (min * max).sqrt();
+            min = centre / MIN_SPAN_RATIO.sqrt();
+            max = centre * MIN_SPAN_RATIO.sqrt();
+            if min < ABSOLUTE_MIN_HZ {
+                min = ABSOLUTE_MIN_HZ;
+                max = min * MIN_SPAN_RATIO;
+            }
+            if max > nyquist {
+                max = nyquist;
+                min = max / MIN_SPAN_RATIO;
+            }
+        }
+        Self::new(min, max)
+    }
+
+    pub fn log_span(&self) -> f64 {
+        (self.max_hz / self.min_hz).ln()
+    }
+
+    /// Frequency at fraction `f` (0 = bottom, 1 = top) of the range.
+    pub fn hz_at(&self, f: f64) -> f64 {
+        self.min_hz * (self.log_span() * f).exp()
+    }
+
+    /// Fraction (0 = bottom, 1 = top) at which `hz` sits; may be outside 0..1.
+    pub fn fraction_of(&self, hz: f64) -> f64 {
+        (hz / self.min_hz).ln() / self.log_span()
     }
 }
 
-/// Width of one FFT bin in Hz. (The original web app divided by
-/// `fftSize * 2`, which read every row one octave too high.)
+/// Width of one FFT bin in Hz.
 pub fn bin_hz(sample_rate: f64, fft_size: usize) -> f64 {
     sample_rate / fft_size as f64
 }
 
-/// Terminal value `j` of the original nearest-bin search loop:
-///
-/// ```js
-/// let j = 0, previousDistance = 1e8;
-/// while (previousDistance > Math.abs(mid - j * binSizeHz)) {
-///   previousDistance = Math.abs(mid - j * binSizeHz);
-///   j++;
-/// }
-/// ```
-///
-/// The distance is strictly decreasing while `j * bin_hz <= mid`, so we can
-/// start the literal loop two bins below the floor and get the same result
-/// without walking from zero.
-pub fn legacy_nearest_bin(mid: f64, bin_hz: f64) -> usize {
-    let dist = |j: usize| (mid - j as f64 * bin_hz).abs();
-    let floor = if bin_hz > 0.0 && mid.is_finite() {
-        (mid / bin_hz).floor().max(0.0) as usize
-    } else {
-        0
-    };
-    let mut j = floor.saturating_sub(1);
-    let mut previous = if j == 0 { 100_000_000.0 } else { dist(j - 1) };
-    while previous > dist(j) {
-        previous = dist(j);
-        j += 1;
-    }
-    j
-}
-
-/// Literal port of the search loop, used to validate [`legacy_nearest_bin`].
-#[cfg(test)]
-fn literal_nearest_bin(mid: f64, bin_hz: f64) -> usize {
-    let mut j = 0usize;
-    let mut previous = 100_000_000.0f64;
-    while previous > (mid - j as f64 * bin_hz).abs() {
-        previous = (mid - j as f64 * bin_hz).abs();
-        j += 1;
-    }
-    j
+/// How a row reads the spectrum.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RowBins {
+    /// The row is narrower than a bin: interpolate between bin `k` and `k + 1`
+    /// with weight `frac` on the upper bin.
+    Interpolate { k: usize, frac: f32 },
+    /// The row spans several bins: take the loudest of `lo..=hi`.
+    Max { lo: usize, hi: usize },
+    /// Outside the spectrum.
+    None,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct RowMap {
-    /// Start frequency of each row (row 0 is the lowest frequency).
-    pub start_hz: Vec<f64>,
-    /// For each row, the lower of the two bins that are averaged
-    /// (`j - 1` in the original), or `None` when the row is out of range.
-    pub bins: Vec<Option<usize>>,
+    pub range: FreqRange,
+    /// Centre frequency of each row (row 0 is the lowest frequency).
+    pub hz: Vec<f64>,
+    /// Lower edge frequency of each row, plus the top edge as the last entry.
+    pub edges: Vec<f64>,
+    pub bins: Vec<RowBins>,
 }
 
 impl RowMap {
-    pub fn build(scale: Scale, height: usize, sample_rate: f64, fft_size: usize) -> Self {
-        let max_hz = sample_rate / 2.0;
+    pub fn build(range: FreqRange, height: usize, sample_rate: f64, fft_size: usize) -> Self {
         let bin_hz = bin_hz(sample_rate, fft_size);
         let bin_count = fft_size / 2;
-        let mut start_hz = Vec::with_capacity(height);
+        let edges: Vec<f64> = (0..=height)
+            .map(|i| range.hz_at(i as f64 / height as f64))
+            .collect();
+        let mut hz = Vec::with_capacity(height);
         let mut bins = Vec::with_capacity(height);
         for i in 0..height {
-            let start = pixel_start(scale, max_hz, height, i);
-            let next = pixel_start(scale, max_hz, height, i + 1);
-            let size = next - start;
-            let mid = start + size / 2.0;
-            let j = legacy_nearest_bin(mid, bin_hz);
-            start_hz.push(start);
-            bins.push(if j < bin_count { Some(j - 1) } else { None });
+            let lo_hz = edges[i];
+            let hi_hz = edges[i + 1];
+            let centre = (lo_hz * hi_hz).sqrt();
+            hz.push(centre);
+            // bins whose centre lies inside the row
+            let lo_bin = (lo_hz / bin_hz).ceil().max(0.0) as usize;
+            let hi_bin = ((hi_hz / bin_hz).ceil() as usize).saturating_sub(1);
+            let row = if hi_bin > lo_bin && hi_bin < bin_count {
+                RowBins::Max {
+                    lo: lo_bin,
+                    hi: hi_bin,
+                }
+            } else {
+                let pos = centre / bin_hz;
+                let k = pos.floor() as usize;
+                if k + 1 < bin_count {
+                    RowBins::Interpolate {
+                        k,
+                        frac: (pos - k as f64) as f32,
+                    }
+                } else {
+                    RowBins::None
+                }
+            };
+            bins.push(row);
         }
-        Self { start_hz, bins }
+        Self {
+            range,
+            hz,
+            edges,
+            bins,
+        }
     }
 
     pub fn height(&self) -> usize {
-        self.start_hz.len()
+        self.hz.len()
+    }
+
+    /// Value of one row from a byte spectrum, 0..=255.
+    #[inline]
+    pub fn value(&self, i: usize, spectrum: &[u8]) -> f32 {
+        match self.bins[i] {
+            RowBins::Interpolate { k, frac } => {
+                let a = spectrum.get(k).copied().unwrap_or(0) as f32;
+                let b = spectrum.get(k + 1).copied().unwrap_or(0) as f32;
+                a + (b - a) * frac
+            }
+            RowBins::Max { lo, hi } => spectrum
+                .get(lo..=hi)
+                .map_or(0, |s| s.iter().copied().max().unwrap_or(0))
+                as f32,
+            RowBins::None => 0.0,
+        }
     }
 }
 
@@ -130,63 +211,87 @@ mod tests {
     use super::*;
 
     #[test]
-    fn piano_scale_starts_at_base_note() {
-        assert_eq!(piano_pixel_start(0, 1092), pitch_by_number(BASE_NOTE));
+    fn presets_cover_the_expected_ranges() {
+        let piano = FreqRange::preset(Scale::Piano, 48000.0);
+        assert!((piano.min_hz - 36.71).abs() < 0.01);
+        assert!((piano.max_hz - 9397.27).abs() < 0.01);
+        let log = FreqRange::preset(Scale::Logarithmic, 48000.0);
+        assert_eq!(log, FreqRange::new(20.0, 20000.0));
+        let log_low_rate = FreqRange::preset(Scale::Logarithmic, 16000.0);
+        assert_eq!(log_low_rate.max_hz, 8000.0);
         assert!((pitch_by_number(49.0) - 440.0).abs() < 1e-9);
+        assert!((note_number(880.0) - 61.0).abs() < 1e-9);
     }
 
     #[test]
-    fn fast_nearest_bin_matches_literal_loop() {
-        let bin_hz = 48000.0 / 16384.0;
-        for scale in [Scale::Piano, Scale::Logarithmic] {
-            for height in [546usize, 1092, 819] {
-                for i in 0..height {
-                    let start = pixel_start(scale, 24000.0, height, i);
-                    let next = pixel_start(scale, 24000.0, height, i + 1);
-                    let mid = start + (next - start) / 2.0;
-                    assert_eq!(
-                        legacy_nearest_bin(mid, bin_hz),
-                        literal_nearest_bin(mid, bin_hz),
-                        "scale {scale:?} height {height} row {i}"
-                    );
+    fn range_is_logarithmic_and_invertible() {
+        let r = FreqRange::new(20.0, 20000.0);
+        assert!((r.hz_at(0.0) - 20.0).abs() < 1e-9);
+        assert!((r.hz_at(1.0) - 20000.0).abs() < 1e-6);
+        assert!((r.hz_at(1.0 / 3.0) - 200.0).abs() < 1e-6);
+        assert!((r.fraction_of(2000.0) - 2.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn clamping_respects_limits() {
+        let r = FreqRange::new(1.0, 1e9).clamped(48000.0);
+        assert_eq!(r, FreqRange::new(ABSOLUTE_MIN_HZ, 24000.0));
+        let r = FreqRange::new(440.0, 441.0).clamped(48000.0);
+        assert!((r.max_hz / r.min_hz - MIN_SPAN_RATIO).abs() < 1e-9);
+        assert!(r.min_hz < 440.0 && r.max_hz > 441.0);
+        let r = FreqRange::new(f64::NAN, 100.0).clamped(48000.0);
+        assert!(r.min_hz.is_finite());
+    }
+
+    #[test]
+    fn rows_read_bins_at_their_own_frequency() {
+        let map = RowMap::build(
+            FreqRange::preset(Scale::Piano, 48000.0),
+            1092,
+            48000.0,
+            8192,
+        );
+        let bin = 48000.0 / 8192.0;
+        assert_eq!(map.height(), 1092);
+        for i in 0..map.height() {
+            match map.bins[i] {
+                RowBins::Interpolate { k, frac } => {
+                    let pos = k as f64 + frac as f64;
+                    assert!((pos * bin - map.hz[i]).abs() < 0.01, "row {i}");
                 }
+                RowBins::Max { lo, hi } => {
+                    assert!(lo as f64 * bin >= map.edges[i] - 1e-9, "row {i}");
+                    assert!(hi as f64 * bin < map.edges[i + 1] + 1e-9, "row {i}");
+                }
+                RowBins::None => panic!("row {i} out of range"),
             }
         }
-        for mid in [0.0, 0.5, 1.4648, 2.93, 12000.0, 54157.9] {
-            assert_eq!(
-                legacy_nearest_bin(mid, bin_hz),
-                literal_nearest_bin(mid, bin_hz)
-            );
-        }
-    }
-
-    #[test]
-    fn rows_read_the_bins_at_their_own_frequency() {
-        let map = RowMap::build(Scale::Piano, 1092, 48000.0, 8192);
-        let hz = 48000.0 / 8192.0;
-        for i in 0..map.height() {
-            let next = pixel_start(Scale::Piano, 24000.0, 1092, i + 1);
-            let mid = (map.start_hz[i] + next) / 2.0;
-            // The two averaged bins are the nearest bin and the one above it,
-            // so the row's midpoint is within half a bin of the lower one.
-            let lower = map.bins[i].unwrap() as f64 * hz;
-            assert!(
-                (mid - lower).abs() <= hz / 2.0 + 1e-9,
-                "row {i}: mid {mid} vs bin {lower}"
-            );
-        }
-    }
-
-    #[test]
-    fn rows_are_monotonic_and_in_range() {
-        let map = RowMap::build(Scale::Piano, 1092, 48000.0, 8192);
-        assert_eq!(map.height(), 1092);
-        for w in map.start_hz.windows(2) {
+        // low rows are narrower than a bin, high rows span several
+        assert!(matches!(map.bins[0], RowBins::Interpolate { .. }));
+        assert!(matches!(map.bins[1091], RowBins::Max { .. }));
+        for w in map.hz.windows(2) {
             assert!(w[0] < w[1]);
         }
-        assert!(map.bins.iter().all(|b| b.is_some()));
-        let log = RowMap::build(Scale::Logarithmic, 1092, 48000.0, 8192);
-        // the top of the "logarithmic" scale is beyond the array, as before
-        assert!(log.bins.last().unwrap().is_none());
+    }
+
+    #[test]
+    fn wide_rows_take_the_loudest_bin() {
+        let map = RowMap::build(FreqRange::new(1000.0, 20000.0), 100, 48000.0, 1024);
+        let mut spectrum = vec![0u8; 512];
+        let RowBins::Max { lo, hi } = map.bins[50] else {
+            panic!("expected a wide row");
+        };
+        spectrum[lo] = 10;
+        spectrum[hi] = 200;
+        assert_eq!(map.value(50, &spectrum), 200.0);
+        let map = RowMap::build(FreqRange::new(100.0, 110.0), 100, 48000.0, 8192);
+        assert!(matches!(map.bins[0], RowBins::Interpolate { .. }));
+        let mut spectrum = vec![0u8; 4096];
+        let RowBins::Interpolate { k, frac } = map.bins[0] else {
+            unreachable!()
+        };
+        spectrum[k] = 100;
+        spectrum[k + 1] = 200;
+        assert!((map.value(0, &spectrum) - (100.0 + 100.0 * frac)).abs() < 1e-3);
     }
 }

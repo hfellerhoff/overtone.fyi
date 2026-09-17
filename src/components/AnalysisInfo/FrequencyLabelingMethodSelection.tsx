@@ -10,7 +10,7 @@ const LABELING_METHOD_OPTIONS = [
   },
   {
     value: "linear",
-    label: "Linear",
+    label: "Hz",
   },
 ] as const;
 
