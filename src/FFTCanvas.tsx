@@ -1,26 +1,16 @@
 import { useAtom, useAtomValue } from "jotai";
 import { MicIcon, MicOffIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import AnalysisInfo from "./components/AnalysisInfo";
 import FrequencyMarkers from "./components/FrequencyMarkers";
+import { useAnalysis } from "./engine/useAnalysis";
 import {
-  analyzerAtom,
-  fftSizeAtom,
-  frequencyLabelCanvasHeightAtom,
-  frequencyLabelCanvasWidthAtom,
+  canvasHeightAtom,
   isRecordingAtom,
-  liveCanvasHeightAtom,
-  liveCanvasWidthAtom,
-  sampleRateAtom,
   TIMESERIES_CANVAS_WIDTHS,
-  timeseriesCanvasHeightAtom,
   timeseriesCanvasWidthAtom,
 } from "./lib/fft";
-import { useUpdateAudioValues } from "./lib/useUpdateAudioValues";
-import { useUpdateLiveCanvas } from "./lib/useUpdateLiveCanvas";
-import { useUpdateTimeseriesCanvas } from "./lib/useUpdateTimeseriesCanvas";
 import { useMediaQuery } from "./lib/utils";
-import { useUpdateFrequencyLabelCanvas } from "./lib/useUpdateFrequencyLabelCanvas";
 
 const TOP_BAR_HEIGHT = 128;
 const VERTICAL_PADDING = 20;
@@ -28,119 +18,39 @@ const CANVAS_HEIGHT = `calc(var(--adjusted-height) - ${
   TOP_BAR_HEIGHT + VERTICAL_PADDING
 }px)`;
 
+const LIVE_CANVAS_WIDTH = 272;
+const LABEL_CANVAS_WIDTH = 64;
+
 export default function FFTCanvas() {
-  const [analyzer, setAnalyzer] = useAtom(analyzerAtom);
   const [isRecording, setIsRecording] = useAtom(isRecordingAtom);
-
-  const [sampleRate] = useAtom(sampleRateAtom);
-  const [fftSize, setFFTSize] = useAtom(fftSizeAtom);
-
-  const timeSeriesCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasHeight = useAtomValue(canvasHeightAtom);
   const [timeseriesCanvasWidth, setTimeseriesCanvasWidth] = useAtom(
     timeseriesCanvasWidthAtom,
   );
-  const [timeseriesCanvasHeight] = useAtom(timeseriesCanvasHeightAtom);
-  const { registerTimeseriesCanvas, updateTimeseriesCanvas } =
-    useUpdateTimeseriesCanvas();
 
+  const timeSeriesCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [liveCanvasWidth] = useAtom(liveCanvasWidthAtom);
-  const [liveCanvasHeight] = useAtom(liveCanvasHeightAtom);
-  const updateLiveCanvas = useUpdateLiveCanvas();
-
   const frequencyLabelCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const frequencyLabelCanvasWidth = useAtomValue(frequencyLabelCanvasWidthAtom);
-  const frequencyLabelCanvasHeight = useAtomValue(
-    frequencyLabelCanvasHeightAtom,
-  );
-  const { registerFrequencyLabelCanvas, updateFrequencyLabelCanvas } =
-    useUpdateFrequencyLabelCanvas();
 
-  const updateAudioValues = useUpdateAudioValues();
+  const { renderer, info, error } = useAnalysis();
+
+  useLayoutEffect(() => {
+    renderer.setCanvases(
+      timeSeriesCanvasRef.current,
+      liveCanvasRef.current,
+      frequencyLabelCanvasRef.current,
+    );
+  }, [renderer, canvasHeight, timeseriesCanvasWidth]);
 
   useEffect(() => {
     const handleKeypress = (ev: KeyboardEvent) => {
       if (ev.key === " ") {
-        setIsRecording((prevIsRecording) => !prevIsRecording);
+        setIsRecording((prev) => !prev);
       }
     };
-
     window.addEventListener("keydown", handleKeypress);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeypress);
-    };
-  });
-
-  useEffect(() => {
-    const getDevices = async () => {
-      const userMediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-      const audioContext = new AudioContext({
-        sampleRate,
-      });
-      const source = audioContext.createMediaStreamSource(userMediaStream);
-
-      const analyser = audioContext.createAnalyser();
-
-      source.connect(analyser);
-
-      analyser.fftSize = fftSize;
-      analyser.smoothingTimeConstant = 0;
-
-      setAnalyzer(analyser);
-    };
-
-    getDevices();
-  }, [
-    fftSize,
-    sampleRate,
-    setAnalyzer,
-    updateAudioValues,
-    updateLiveCanvas,
-    updateTimeseriesCanvas,
-  ]);
-
-  useEffect(() => {
-    if (!analyzer || !isRecording) return;
-
-    let id = 0;
-
-    const update = (time: DOMHighResTimeStamp) => {
-      const hzData = updateAudioValues(analyzer);
-
-      if (timeSeriesCanvasRef.current) {
-        updateTimeseriesCanvas(time, hzData);
-      }
-      if (liveCanvasRef.current) {
-        updateLiveCanvas(liveCanvasRef.current, hzData);
-      }
-      if (frequencyLabelCanvasRef.current) {
-        updateFrequencyLabelCanvas(time, hzData);
-      }
-
-      id = window.requestAnimationFrame(update);
-    };
-
-    registerTimeseriesCanvas(timeSeriesCanvasRef.current);
-    registerFrequencyLabelCanvas(frequencyLabelCanvasRef.current);
-
-    update(0);
-
-    return () => {
-      window.cancelAnimationFrame(id);
-    };
-  }, [
-    analyzer,
-    isRecording,
-    registerFrequencyLabelCanvas,
-    registerTimeseriesCanvas,
-    updateAudioValues,
-    updateFrequencyLabelCanvas,
-    updateLiveCanvas,
-    updateTimeseriesCanvas,
-  ]);
+    return () => window.removeEventListener("keydown", handleKeypress);
+  }, [setIsRecording]);
 
   const isTablet = useMediaQuery("(max-width: 800px)");
   const isMobile = useMediaQuery("(max-width: 600px)");
@@ -151,31 +61,19 @@ export default function FFTCanvas() {
       setHasMounted(true);
       return;
     }
-
-    if (isMobile) {
-      if (timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.DESKTOP) {
-        setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.MOBILE);
-      }
+    if (isMobile && timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.DESKTOP) {
+      setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.MOBILE);
     }
-
-    if (!isMobile) {
-      if (timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.MOBILE) {
-        setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
-      }
+    if (!isMobile && timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.MOBILE) {
+      setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
     }
-  }, [
-    hasMounted,
-    isMobile,
-    setFFTSize,
-    setTimeseriesCanvasWidth,
-    timeseriesCanvasWidth,
-  ]);
+  }, [hasMounted, isMobile, setTimeseriesCanvasWidth, timeseriesCanvasWidth]);
 
-  let liveCanvasWidthPx = liveCanvasWidth * 2;
+  let liveCanvasWidthPx = LIVE_CANVAS_WIDTH * 2;
   if (isMobile) {
-    liveCanvasWidthPx = liveCanvasWidth;
+    liveCanvasWidthPx = LIVE_CANVAS_WIDTH;
   } else if (isTablet) {
-    liveCanvasWidthPx = liveCanvasWidth * 1.5;
+    liveCanvasWidthPx = LIVE_CANVAS_WIDTH * 1.5;
   }
 
   return (
@@ -193,7 +91,7 @@ export default function FFTCanvas() {
       >
         <button
           className="grid h-full border rounded-md shadow-sm place-items-center aspect-square border-input bg-background hover:bg-accent hover:text-accent-foreground"
-          onClick={() => setIsRecording((prevIsRecording) => !prevIsRecording)}
+          onClick={() => setIsRecording((prev) => !prev)}
         >
           {isRecording ? (
             <span className="flex flex-col items-center gap-1">
@@ -207,6 +105,11 @@ export default function FFTCanvas() {
         </button>
         <AnalysisInfo />
       </div>
+      {error && (
+        <div className="px-2 py-1 mt-2 font-mono text-xs text-red-300 border border-red-900 rounded-md bg-red-950">
+          {error}
+        </div>
+      )}
       <main
         className="flex gap-2 pt-2 overflow-hidden rounded-lg"
         style={{
@@ -222,33 +125,34 @@ export default function FFTCanvas() {
           <canvas
             ref={liveCanvasRef}
             className="w-full h-full bg-black border rounded-lg border-input"
-            width={liveCanvasWidth}
-            height={liveCanvasHeight}
+            width={LIVE_CANVAS_WIDTH}
+            height={canvasHeight}
           />
         </div>
         <div
           className="relative h-full overflow-hidden"
           style={{
-            width: frequencyLabelCanvasWidth,
+            width: LABEL_CANVAS_WIDTH,
           }}
         >
           <canvas
             ref={frequencyLabelCanvasRef}
             className="w-full h-full bg-black border rounded-lg border-input"
-            width={frequencyLabelCanvasWidth}
-            height={frequencyLabelCanvasHeight}
+            width={LABEL_CANVAS_WIDTH}
+            height={canvasHeight}
           />
         </div>
         <div className="relative w-full h-full overflow-hidden">
           <FrequencyMarkers
             canvas={timeSeriesCanvasRef.current}
-            canvasHeight={timeseriesCanvasHeight}
+            canvasHeight={canvasHeight}
+            markers={info?.markers ?? []}
           />
           <canvas
             ref={timeSeriesCanvasRef}
             className="w-full h-full bg-black border rounded-lg border-input"
             width={timeseriesCanvasWidth}
-            height={timeseriesCanvasHeight}
+            height={canvasHeight}
           />
         </div>
       </main>

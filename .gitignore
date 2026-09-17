@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Rust / wasm build output
+target
+src/wasm/pkg
+*.tsbuildinfo

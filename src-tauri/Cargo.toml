@@ -1,0 +1,25 @@
+[package]
+name = "overtone-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "overtone.fyi desktop app"
+license = "MIT"
+
+[lib]
+name = "overtone_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+overtone-core = { path = "../crates/overtone-core" }
+tauri = { version = "2", features = [] }
+cpal = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+parking_lot = "0.12"
+ringbuf = "0.5"
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }

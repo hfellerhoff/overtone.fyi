@@ -10,10 +10,20 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    // The AudioWorklet module must be a real file: some browsers refuse
+    // data: URLs in audioWorklet.addModule.
+    assetsInlineLimit: (filePath) =>
+      filePath.endsWith("capture-worklet.js") ? false : undefined,
+  },
   server: {
     port: 3000,
+    strictPort: true,
   },
   preview: {
     port: 3000,
+    strictPort: true,
   },
+  // Tauri expects a fixed port and no clearing of the terminal.
+  clearScreen: false,
 });

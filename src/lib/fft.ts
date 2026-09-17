@@ -1,24 +1,16 @@
 import { atom } from "jotai";
-import {
-  IProcessedAudioData,
-  IProcessedAudioDataItem,
-} from "./useUpdateAudioValues";
 import { atomWithStorage } from "jotai/utils";
+import type {
+  AnalyzerScale,
+  ColoringMethod,
+  FrequencyLabelMethod,
+} from "@/engine/types";
 
-export const analyzerAtom = atom<AnalyserNode | null>(null);
+export type { AnalyzerScale, ColoringMethod, FrequencyLabelMethod };
 
 export const isRecordingAtom = atom(true);
 
-export const sampleRateAtom = atom(48000);
 export const fftSizeAtom = atomWithStorage("fft-size", 8192);
-export const binSizeAtom = atom((get) => get(fftSizeAtom) * 2);
-export const binSizeHzAtom = atom(
-  (get) => get(sampleRateAtom) / get(binSizeAtom)
-);
-
-export const heightFactor = atom((get) => {
-  return get(fftSizeAtom) / (546.1333333333 * devicePixelRatio);
-});
 
 export const TIMESERIES_CANVAS_WIDTHS = {
   DESKTOP: 2048,
@@ -26,52 +18,26 @@ export const TIMESERIES_CANVAS_WIDTHS = {
 };
 
 export const timeseriesCanvasWidthAtom = atom(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
-export const timeseriesCanvasHeightAtom = atom((get) =>
-  Math.floor(get(fftSizeAtom) / get(heightFactor))
+
+/**
+ * Number of analysis rows. The original derived this from the FFT size and a
+ * height factor that cancelled out to `546.13 * devicePixelRatio`.
+ */
+export const canvasHeightAtom = atom(() =>
+  Math.floor(546.1333333333 * (window.devicePixelRatio || 1)),
 );
 
-export const liveCanvasWidthAtom = atom(256 + 16);
-export const liveCanvasHeightAtom = atom((get) =>
-  Math.floor(get(fftSizeAtom) / get(heightFactor))
-);
-
-export const frequencyLabelCanvasWidthAtom = atom(64);
-export const frequencyLabelCanvasHeightAtom = atom((get) =>
-  Math.floor(get(fftSizeAtom) / get(heightFactor))
-);
-
-// nyquist frequency
-export const maxDisplayHzAtom = atom((get) => get(sampleRateAtom) / 2);
-
-export const audioDataArrayAtom = atom(
-  (get) => new Uint8Array(get(binSizeAtom))
-);
-
-export const audioDataHistoryAtom = atom<IProcessedAudioData[]>([]);
-
-export const frequencyMarkersAtom = atom<[hz: number, index: number][]>([]);
-export const frequencyMarkerDistanceAtom = atom(25);
-
-export const audioDataAnalysisAtom = atom<{
-  highestAmplitudeValues: IProcessedAudioDataItem[];
-}>({
-  highestAmplitudeValues: [],
-});
-
-export type ColoringMethod = "sigmoid" | "detailed";
 export const coloringMethodAtom = atomWithStorage<ColoringMethod>(
   "coloring-method",
-  "detailed"
+  "detailed",
 );
 
-export type FrequencyLabelMethod = "linear" | "piano";
 export const frequencyLabelMethodAtom = atomWithStorage<FrequencyLabelMethod>(
   "frequency-labeling-method",
-  "piano"
+  "piano",
 );
 
-export type AnalayzerScale = "piano" | "logarithmic";
-export const analyzerScaleAtom = atomWithStorage<AnalayzerScale>(
+export const analyzerScaleAtom = atomWithStorage<AnalyzerScale>(
   "analyzer-scale",
-  "piano"
+  "piano",
 );
