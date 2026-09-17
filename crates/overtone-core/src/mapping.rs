@@ -18,13 +18,6 @@ pub const BASE_NOTE: f64 = 6.0;
 pub const REFERENCE_HZ: f64 = 440.0;
 pub const REFERENCE_NOTE_NUMBER: f64 = 49.0;
 
-/// The original app computed the bin width as `sampleRate / (fftSize * 2)`
-/// even though an FFT of `fftSize` samples has bins that are
-/// `sampleRate / fftSize` apart. That maps each on-screen frequency to the
-/// bin one octave above it. It is kept here so the port renders exactly what
-/// the website rendered; set to `1.0` to get physically correct frequencies.
-pub const LEGACY_BIN_HZ_DIVISOR: f64 = 2.0;
-
 pub fn semitone_factor() -> f64 {
     2f64.powf(1.0 / 12.0)
 }
@@ -52,8 +45,10 @@ pub fn pixel_start(scale: Scale, max_hz: f64, height: usize, i: usize) -> f64 {
     }
 }
 
+/// Width of one FFT bin in Hz. (The original web app divided by
+/// `fftSize * 2`, which read every row one octave too high.)
 pub fn bin_hz(sample_rate: f64, fft_size: usize) -> f64 {
-    sample_rate / (fft_size as f64 * LEGACY_BIN_HZ_DIVISOR)
+    sample_rate / fft_size as f64
 }
 
 /// Terminal value `j` of the original nearest-bin search loop:
@@ -110,7 +105,7 @@ impl RowMap {
     pub fn build(scale: Scale, height: usize, sample_rate: f64, fft_size: usize) -> Self {
         let max_hz = sample_rate / 2.0;
         let bin_hz = bin_hz(sample_rate, fft_size);
-        let array_len = fft_size * 2; // length of the original Uint8Array
+        let bin_count = fft_size / 2;
         let mut start_hz = Vec::with_capacity(height);
         let mut bins = Vec::with_capacity(height);
         for i in 0..height {
@@ -120,7 +115,7 @@ impl RowMap {
             let mid = start + size / 2.0;
             let j = legacy_nearest_bin(mid, bin_hz);
             start_hz.push(start);
-            bins.push(if j < array_len { Some(j - 1) } else { None });
+            bins.push(if j < bin_count { Some(j - 1) } else { None });
         }
         Self { start_hz, bins }
     }
@@ -161,6 +156,23 @@ mod tests {
             assert_eq!(
                 legacy_nearest_bin(mid, bin_hz),
                 literal_nearest_bin(mid, bin_hz)
+            );
+        }
+    }
+
+    #[test]
+    fn rows_read_the_bins_at_their_own_frequency() {
+        let map = RowMap::build(Scale::Piano, 1092, 48000.0, 8192);
+        let hz = 48000.0 / 8192.0;
+        for i in 0..map.height() {
+            let next = pixel_start(Scale::Piano, 24000.0, 1092, i + 1);
+            let mid = (map.start_hz[i] + next) / 2.0;
+            // The two averaged bins are the nearest bin and the one above it,
+            // so the row's midpoint is within half a bin of the lower one.
+            let lower = map.bins[i].unwrap() as f64 * hz;
+            assert!(
+                (mid - lower).abs() <= hz / 2.0 + 1e-9,
+                "row {i}: mid {mid} vs bin {lower}"
             );
         }
     }

@@ -90,21 +90,14 @@ pub struct PitchResult {
     pub note: Option<usize>,
 }
 
+/// Label `value` with the nearest note. `value <= 0` yields the empty result.
 pub fn find_pitch_label(pitches: &[Pitch], value: f64) -> PitchResult {
-    let mut lower: Option<usize> = None;
-    let mut i = 0usize;
-    let mut entry = &pitches[i];
-    while entry.hz < value {
-        lower = Some(i);
-        if i + 1 >= pitches.len() {
-            break;
-        }
-        i += 1;
-        entry = &pitches[i];
-    }
-    let higher = if i + 1 < pitches.len() { i + 1 } else { i };
+    // first note at or above `value`
+    let i = pitches.partition_point(|p| p.hz < value);
+    let higher = i.min(pitches.len() - 1);
+    let lower = i.checked_sub(1);
 
-    let lower_hz = lower.map(|l| pitches[l].hz).unwrap_or(0.0);
+    let lower_hz = lower.map_or(0.0, |l| pitches[l].hz);
     let lower_diff = value - lower_hz;
     let higher_diff = pitches[higher].hz - value;
 
@@ -166,17 +159,24 @@ mod tests {
     }
 
     #[test]
-    fn label_lookup_matches_original_bias() {
+    fn label_lookup_picks_the_nearest_note() {
         let t = pitch_table();
-        let r = find_pitch_label(&t, 441.0);
-        assert_eq!(t[r.note.unwrap()].label, "A4");
-        // 465 Hz is nearer to A#4 (466.16) but the original compares against
-        // the note after the first one >= value, so it still reports A4.
-        let r = find_pitch_label(&t, 465.0);
-        assert_eq!(t[r.note.unwrap()].label, "A4");
+        for (hz, label) in [
+            (441.0, "A4"),
+            (439.5, "A4"),
+            (465.0, "A#4/Bb4"),
+            (452.0, "A4"),
+            (454.0, "A#4/Bb4"),
+        ] {
+            let r = find_pitch_label(&t, hz);
+            assert_eq!(t[r.note.unwrap()].label, label, "{hz} Hz");
+        }
         let r = find_pitch_label(&t, 0.0);
         assert_eq!(r.note, None);
         assert_eq!(r.target_hz, 0.0);
+        // above the table: last note
+        let r = find_pitch_label(&t, 1e9);
+        assert_eq!(r.note, Some(t.len() - 1));
     }
 
     #[test]

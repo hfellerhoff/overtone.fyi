@@ -375,17 +375,12 @@ mod tests {
     #[test]
     fn tone_lights_up_the_expected_row_and_pitch() {
         let mut e = Engine::new(EngineConfig::default()).unwrap();
-        // The original maps screen frequency f to FFT bin f / (sr / (2 * fft)),
-        // i.e. it reads one octave above the label; feed 880 Hz to see "440".
-        e.push_mono(&sine(8192, 880.0, 48000.0, 0.5));
+        e.push_mono(&sine(8192, 440.0, 48000.0, 0.5));
         let p = e.frame().to_vec();
         let pitch_hz = f32::from_le_bytes(p[20..24].try_into().unwrap());
         let note = i32::from_le_bytes(p[28..32].try_into().unwrap());
-        assert!((pitch_hz - 440.0).abs() < 12.0, "pitch {pitch_hz}");
-        // The label follows the original lookup (which is biased one note
-        // upward for values just below a note), so check consistency with it.
-        let expected = crate::pitch::find_pitch_label(&e.pitches, pitch_hz as f64);
-        assert_eq!(note, expected.note.unwrap() as i32);
+        assert!((pitch_hz - 440.0).abs() < 6.0, "pitch {pitch_hz}");
+        assert_eq!(e.info().notes[note as usize], "A4");
         // brightest live bar must be near the 440 Hz row
         let values = e.values();
         let (row, _) = values
