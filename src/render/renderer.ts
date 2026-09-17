@@ -1,4 +1,4 @@
-import { FLAG_NEW_AUDIO, parsePacket } from "@/engine/packet";
+import { parsePacket } from "@/engine/packet";
 import type { EngineInfo } from "@/engine/types";
 
 /**
@@ -11,7 +11,16 @@ export class SpectrogramRenderer {
   private label: CanvasRenderingContext2D | null = null;
   private liveGradient: CanvasGradient | null = null;
   private column: ImageData | null = null;
+  private columnCanvas: HTMLCanvasElement | null = null;
   private lastSeq = -1;
+  /** Timeline scroll speed in canvas pixels per second. */
+  private pixelsPerSecond = 240;
+  private lastTimeMs: number | null = null;
+  private scrollAccumulator = 0;
+
+  setTimelineSpeed(pixelsPerSecond: number) {
+    this.pixelsPerSecond = pixelsPerSecond;
+  }
 
   setCanvases(
     timeseries: HTMLCanvasElement | null,
@@ -23,6 +32,9 @@ export class SpectrogramRenderer {
     this.label = label?.getContext("2d", { alpha: false }) ?? null;
     this.liveGradient = null;
     this.column = null;
+    this.columnCanvas = null;
+    this.lastTimeMs = null;
+    this.scrollAccumulator = 0;
     if (this.timeseries) {
       this.timeseries.imageSmoothingEnabled = false;
       this.timeseries.fillStyle = "black";
@@ -47,35 +59,60 @@ export class SpectrogramRenderer {
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     this.lastSeq = -1;
+    this.lastTimeMs = null;
+    this.scrollAccumulator = 0;
   }
 
-  /** Returns the parsed packet so the caller can update text displays. */
-  draw(bytes: Uint8Array) {
+  /**
+   * Draw a frame packet. `timeMs` drives the timeline scroll so the
+   * horizontal axis stays linear in time regardless of frame rate.
+   * Returns the parsed packet so the caller can update text displays.
+   */
+  draw(bytes: Uint8Array, timeMs: number) {
     const packet = parsePacket(bytes);
     if (packet.seq === this.lastSeq) return packet;
     this.lastSeq = packet.seq;
-    // A frame with no new audio would just repeat the previous column.
-    if (packet.flags & FLAG_NEW_AUDIO) {
-      this.drawTimeseries(packet.column, packet.height);
-    }
+    this.drawTimeseries(packet.column, packet.height, timeMs);
     this.drawLive(packet.live, packet.height);
     return packet;
   }
 
-  private drawTimeseries(column: Uint8ClampedArray, height: number) {
+  private drawTimeseries(column: Uint8ClampedArray, height: number, timeMs: number) {
     const ctx = this.timeseries;
     if (!ctx) return;
     const { width, height: canvasHeight } = ctx.canvas;
     if (canvasHeight !== height) return;
-    // Scroll the existing image one pixel to the right (GPU blit), then
-    // paint the new column at x = 0.
-    ctx.drawImage(ctx.canvas, 1, 0);
+
+    // How many pixels the timeline advances for the elapsed time.
+    let advance = 1;
+    if (this.lastTimeMs !== null) {
+      this.scrollAccumulator +=
+        ((timeMs - this.lastTimeMs) / 1000) * this.pixelsPerSecond;
+      advance = Math.floor(this.scrollAccumulator);
+      this.scrollAccumulator -= advance;
+    }
+    this.lastTimeMs = timeMs;
+    if (advance <= 0) return;
+    advance = Math.min(advance, width);
+
+    // Scroll the existing image to the right (GPU blit), then paint the new
+    // column stretched over the pixels that were vacated.
+    ctx.drawImage(ctx.canvas, advance, 0);
     if (!this.column || this.column.height !== height) {
       this.column = new ImageData(1, height);
+      this.columnCanvas = document.createElement("canvas");
+      this.columnCanvas.width = 1;
+      this.columnCanvas.height = height;
     }
     this.column.data.set(column);
-    ctx.putImageData(this.column, 0, 0);
-    void width;
+    if (advance === 1 || !this.columnCanvas) {
+      ctx.putImageData(this.column, 0, 0);
+      return;
+    }
+    const columnCtx = this.columnCanvas.getContext("2d");
+    if (!columnCtx) return;
+    columnCtx.putImageData(this.column, 0, 0);
+    ctx.drawImage(this.columnCanvas, 0, 0, 1, height, 0, 0, advance, height);
   }
 
   private drawLive(live: Float32Array, height: number) {

@@ -41,3 +41,10 @@ export const analyzerScaleAtom = atomWithStorage<AnalyzerScale>(
   "analyzer-scale",
   "piano",
 );
+
+/**
+ * Timeline scroll speed multiplier. 1x scrolls 60 px/s, so the full-width
+ * desktop timeline (2048 px) holds about 34 s of history; 4x holds ~8.5 s.
+ */
+export const TIMELINE_BASE_PIXELS_PER_SECOND = 60;
+export const timelineSpeedAtom = atomWithStorage("timeline-speed", 4);

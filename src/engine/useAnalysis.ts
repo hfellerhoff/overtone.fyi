@@ -7,6 +7,8 @@ import {
   fftSizeAtom,
   frequencyLabelMethodAtom,
   isRecordingAtom,
+  TIMELINE_BASE_PIXELS_PER_SECOND,
+  timelineSpeedAtom,
 } from "@/lib/fft";
 import { SpectrogramRenderer } from "@/render/renderer";
 import { createBackend, type AnalysisBackend } from "./backend";
@@ -41,6 +43,11 @@ export function useAnalysis(): AnalysisHandle {
   const scale = useAtomValue(analyzerScaleAtom);
   const coloring = useAtomValue(coloringMethodAtom);
   const labeling = useAtomValue(frequencyLabelMethodAtom);
+  const timelineSpeed = useAtomValue(timelineSpeedAtom);
+
+  useEffect(() => {
+    renderer.setTimelineSpeed(TIMELINE_BASE_PIXELS_PER_SECOND * timelineSpeed);
+  }, [renderer, timelineSpeed]);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +103,7 @@ export function useAnalysis(): AnalysisHandle {
         const bytes = await backend.frame();
         if (cancelled) return;
         if (bytes) {
-          const packet = renderer.draw(bytes);
+          const packet = renderer.draw(bytes, performance.now());
           const notes = infoRef.current?.notes;
           setLiveValues({
             pitchHz: packet.pitchHz,
