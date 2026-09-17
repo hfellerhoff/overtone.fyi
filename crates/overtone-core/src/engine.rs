@@ -7,8 +7,7 @@ use crate::labels::{render_label_strip, Labeling};
 use crate::mapping::{RowMap, Scale};
 use crate::packet::{self, Header, FLAG_NEW_AUDIO};
 use crate::pitch::{
-    detect_pitch, overtone_buckets, pitch_table, Bucket, Pitch, PitchResult,
-    HIGHEST_AMPLITUDE_COUNT,
+    detect_pitch, overtone_buckets, pitch_table, spectral_peaks, Bucket, Pitch, PitchResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -84,8 +83,7 @@ pub struct Engine {
     label_strip: Vec<u8>,
     packet: Vec<u8>,
     values: Vec<f32>,
-    order: Vec<usize>,
-    top: Vec<(f64, f64)>,
+    peaks: Vec<(f64, f64)>,
     buckets: Vec<Bucket>,
     seq: u32,
     last_pitch: PitchResult,
@@ -121,9 +119,8 @@ impl Engine {
             label_strip,
             packet: vec![0; packet::packet_len(height)],
             values: vec![0.0; height],
-            order: Vec::with_capacity(height),
-            top: Vec::with_capacity(HIGHEST_AMPLITUDE_COUNT),
-            buckets: Vec::with_capacity(HIGHEST_AMPLITUDE_COUNT),
+            peaks: Vec::with_capacity(256),
+            buckets: Vec::with_capacity(256),
             seq: 0,
             last_pitch: PitchResult::default(),
         })
@@ -228,8 +225,7 @@ impl Engine {
             &self.lut,
             &self.pitches,
             &mut self.values,
-            &mut self.order,
-            &mut self.top,
+            &mut self.peaks,
             &mut self.buckets,
             &mut self.seq,
             &mut self.packet,
@@ -250,8 +246,7 @@ impl Engine {
             &self.lut,
             &self.pitches,
             &mut self.values,
-            &mut self.order,
-            &mut self.top,
+            &mut self.peaks,
             &mut self.buckets,
             &mut self.seq,
             &mut self.packet,
@@ -280,8 +275,7 @@ fn render_frame(
     lut: &[[u8; 3]],
     pitches: &[Pitch],
     values: &mut [f32],
-    order: &mut Vec<usize>,
-    top: &mut Vec<(f64, f64)>,
+    peaks: &mut Vec<(f64, f64)>,
     buckets: &mut Vec<Bucket>,
     seq: &mut u32,
     packet: &mut [u8],
@@ -297,19 +291,16 @@ fn render_frame(
         };
     }
 
-    // 2. loudest rows → overtone buckets → pitch
-    order.clear();
-    order.extend(0..height);
-    if height > HIGHEST_AMPLITUDE_COUNT {
-        order.select_nth_unstable_by(HIGHEST_AMPLITUDE_COUNT, |&a, &b| {
-            values[b].total_cmp(&values[a]).then(a.cmp(&b))
-        });
-        order.truncate(HIGHEST_AMPLITUDE_COUNT);
-    }
-    order.sort_unstable();
-    top.clear();
-    top.extend(order.iter().map(|&i| (rows.start_hz[i], values[i] as f64)));
-    overtone_buckets(top, buckets);
+    // 2. spectral peaks within the displayed range → overtone buckets → pitch
+    let bin_hz = crate::mapping::bin_hz(config.sample_rate, config.fft_size);
+    let min_hz = rows.start_hz.first().copied().unwrap_or(0.0);
+    let max_hz = rows
+        .start_hz
+        .last()
+        .copied()
+        .unwrap_or(config.sample_rate / 2.0);
+    spectral_peaks(bytes, bin_hz, min_hz, max_hz, peaks);
+    overtone_buckets(peaks, buckets);
     let pitch = detect_pitch(pitches, buckets);
 
     // 3. packet
@@ -379,7 +370,7 @@ mod tests {
         let p = e.frame().to_vec();
         let pitch_hz = f32::from_le_bytes(p[20..24].try_into().unwrap());
         let note = i32::from_le_bytes(p[28..32].try_into().unwrap());
-        assert!((pitch_hz - 440.0).abs() < 6.0, "pitch {pitch_hz}");
+        assert!((pitch_hz - 440.0).abs() < 1.0, "pitch {pitch_hz}");
         assert_eq!(e.info().notes[note as usize], "A4");
         // brightest live bar must be near the 440 Hz row
         let values = e.values();
@@ -391,6 +382,25 @@ mod tests {
         let hz = e.rows.start_hz[row];
         assert!((hz - 440.0).abs() < 12.0, "row hz {hz}");
         assert_eq!(p[16..20], FLAG_NEW_AUDIO.to_le_bytes());
+    }
+
+    #[test]
+    fn harmonic_tone_reports_its_fundamental() {
+        let mut e = Engine::new(EngineConfig::default()).unwrap();
+        // A2 with a strong octave and two more partials, like a sung note.
+        let sr = 48000.0;
+        let mut samples = vec![0.0f32; 8192];
+        for (k, amp) in [(1.0, 0.03), (2.0, 0.03), (3.0, 0.02), (4.0, 0.015)] {
+            for (s, v) in samples.iter_mut().zip(sine(8192, 110.0 * k, sr, amp)) {
+                *s += v;
+            }
+        }
+        e.push_mono(&samples);
+        let p = e.frame().to_vec();
+        let pitch_hz = f32::from_le_bytes(p[20..24].try_into().unwrap());
+        let note = i32::from_le_bytes(p[28..32].try_into().unwrap());
+        assert!((pitch_hz - 110.0).abs() < 1.0, "pitch {pitch_hz}");
+        assert_eq!(e.info().notes[note as usize], "A2");
     }
 
     #[test]

@@ -7,8 +7,6 @@ use crate::mapping::pitch_by_number;
 pub const BUCKET_SENSITIVITY: f64 = 0.9;
 pub const BUCKET_MIN_AMPLITUDE: f64 = 100.0;
 pub const PITCH_SENSITIVITY: f64 = 0.85;
-/// How many of the loudest rows feed the pitch detector.
-pub const HIGHEST_AMPLITUDE_COUNT: usize = 128;
 
 const PITCH_LETTERS: [&str; 12] = [
     "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B",
@@ -48,34 +46,87 @@ pub fn pitch_table() -> Vec<Pitch> {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Bucket {
     pub hz: f64,
-    /// The cumulative amplitude values used to calculate this bucket.
+    /// Amplitude (0–255 byte scale) of the strongest peak in this bucket.
     pub weight: f64,
 }
 
-/// `data` must be ordered by ascending Hz, like `highestAmplitudeValues`.
-pub fn overtone_buckets(data: &[(f64, f64)], buckets: &mut Vec<Bucket>) {
+/// Find spectral peaks in `getByteFrequencyData`-style output.
+///
+/// A peak is a bin louder than both neighbours and above
+/// [`BUCKET_MIN_AMPLITUDE`]. Its frequency is refined with parabolic
+/// interpolation over the three bins (the bytes are linear in dB, which is
+/// what that interpolation assumes), and plateaus of clipped bins are
+/// centred. Only peaks within `min_hz..=max_hz` are reported, ascending.
+pub fn spectral_peaks(
+    bytes: &[u8],
+    bin_hz: f64,
+    min_hz: f64,
+    max_hz: f64,
+    out: &mut Vec<(f64, f64)>,
+) {
+    out.clear();
+    if bytes.len() < 3 || bin_hz <= 0.0 {
+        return;
+    }
+    let threshold = BUCKET_MIN_AMPLITUDE as u8;
+    let mut k = 1;
+    while k + 1 < bytes.len() {
+        let b = bytes[k];
+        if b <= threshold || b < bytes[k - 1] {
+            k += 1;
+            continue;
+        }
+        // extend over a plateau of equal values
+        let mut end = k;
+        while end + 1 < bytes.len() && bytes[end + 1] == b {
+            end += 1;
+        }
+        if end + 1 >= bytes.len() || bytes[end + 1] >= b || bytes[k - 1] >= b {
+            k = end + 1;
+            continue;
+        }
+        let a = bytes[k - 1] as f64;
+        let c = bytes[end + 1] as f64;
+        let bf = b as f64;
+        let centre = (k + end) as f64 / 2.0;
+        let (position, height) = if end == k {
+            let denom = a - 2.0 * bf + c;
+            let delta = if denom != 0.0 {
+                0.5 * (a - c) / denom
+            } else {
+                0.0
+            };
+            (centre + delta.clamp(-0.5, 0.5), bf - 0.25 * (a - c) * delta)
+        } else {
+            (centre, bf)
+        };
+        let hz = position * bin_hz;
+        if hz >= min_hz && hz <= max_hz {
+            out.push((hz, height));
+        }
+        k = end + 1;
+    }
+}
+
+/// Merge peaks that lie within [`BUCKET_SENSITIVITY`] of each other, keeping
+/// the loudest. `peaks` must be ascending in frequency.
+pub fn overtone_buckets(peaks: &[(f64, f64)], buckets: &mut Vec<Bucket>) {
     buckets.clear();
-    for &(item_hz, item_amplitude) in data {
-        match buckets
-            .iter()
-            .position(|bucket| bucket.hz / item_hz > BUCKET_SENSITIVITY)
-        {
-            None => {
-                if item_amplitude > BUCKET_MIN_AMPLITUDE {
-                    buckets.push(Bucket {
-                        hz: item_hz,
-                        weight: item_amplitude,
-                    });
+    for &(hz, amplitude) in peaks {
+        if amplitude <= BUCKET_MIN_AMPLITUDE {
+            continue;
+        }
+        match buckets.last_mut() {
+            Some(last) if last.hz / hz > BUCKET_SENSITIVITY => {
+                if amplitude > last.weight {
+                    last.hz = hz;
+                    last.weight = amplitude;
                 }
             }
-            Some(index) => {
-                let bucket = &mut buckets[index];
-                let updated_weight = bucket.weight + item_amplitude;
-                let ratio = item_amplitude / updated_weight;
-                let updated_hz = item_hz * ratio + bucket.hz * (1.0 - ratio);
-                bucket.hz = updated_hz;
-                bucket.weight = updated_weight;
-            }
+            _ => buckets.push(Bucket {
+                hz,
+                weight: amplitude,
+            }),
         }
     }
 }
@@ -120,11 +171,13 @@ pub fn detect_pitch(pitches: &[Pitch], overtones: &[Bucket]) -> PitchResult {
     let mut previous_pitch = 0.0;
     let mut pitch = 0.0;
 
+    // Buckets are ascending in frequency. The first bucket that is one
+    // octave above its predecessor marks that predecessor as the fundamental.
     for overtone in overtones {
         let target = 0.5;
         let value = previous_pitch / overtone.hz;
         if value > target * PITCH_SENSITIVITY && value < target * (1.0 / PITCH_SENSITIVITY) {
-            pitch = overtone.hz;
+            pitch = previous_pitch;
             break;
         }
         previous_pitch = overtone.hz;
@@ -189,8 +242,30 @@ mod tests {
         );
         assert_eq!(buckets.len(), 3);
         let r = detect_pitch(&t, &buckets);
-        assert!((r.hz - 220.0).abs() < 1e-9);
-        assert_eq!(t[r.note.unwrap()].label, "A3");
+        assert!((r.hz - 110.0).abs() < 1e-9);
+        assert_eq!(t[r.note.unwrap()].label, "A2");
+    }
+
+    #[test]
+    fn nearby_peaks_merge_keeping_the_loudest() {
+        let mut buckets = Vec::new();
+        overtone_buckets(
+            &[
+                (100.0, 120.0),
+                (105.0, 180.0),
+                (108.0, 130.0),
+                (200.0, 110.0),
+            ],
+            &mut buckets,
+        );
+        assert_eq!(buckets.len(), 2);
+        assert_eq!(
+            buckets[0],
+            Bucket {
+                hz: 105.0,
+                weight: 180.0
+            }
+        );
     }
 
     #[test]
