@@ -1,4 +1,4 @@
-import type { CaptureStatus, DisplayConfig, EngineInfo } from "./types";
+import type { CaptureStatus, DisplayConfig, EngineInfo, ViewRequest } from "./types";
 
 /**
  * An analysis backend owns audio capture and the Rust engine. The UI never
@@ -13,8 +13,8 @@ export interface AnalysisBackend {
   configure(config: DisplayConfig): Promise<EngineInfo>;
   /** RGBA label strip (`labelWidth × height`) for the current config. */
   labelStrip(): Promise<Uint8Array>;
-  /** Next frame packet, or null when the backend is not ready yet. */
-  frame(): Promise<Uint8Array | null>;
+  /** Next frame packet for `view`, or null when a frame is still in flight. */
+  frame(view: ViewRequest): Promise<Uint8Array | null>;
   /** Release the microphone and free the engine. */
   dispose(): Promise<void>;
 }

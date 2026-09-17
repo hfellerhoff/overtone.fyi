@@ -1,11 +1,11 @@
 //! wasm-bindgen wrapper around [`overtone_core::Engine`].
 //!
-//! The browser feeds either raw PCM (from an `AudioWorklet`) with
-//! [`WasmEngine::push_samples`], or a `getByteFrequencyData` result with
-//! [`WasmEngine::frame_from_bytes`]. In both cases the returned packet is a
-//! view into wasm memory (no copy) that stays valid until the next call.
+//! The browser feeds raw PCM from an `AudioWorklet` with
+//! [`WasmEngine::push_samples`] and asks for frames with
+//! [`WasmEngine::frame`]. The returned packet is a view into wasm memory
+//! (no copy) that stays valid until the next call into the engine.
 
-use overtone_core::{Engine, EngineConfig};
+use overtone_core::{Engine, EngineConfig, ViewRequest};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -52,18 +52,12 @@ impl WasmEngine {
         self.engine.clear();
     }
 
-    /// Analyse the pushed audio and return the frame packet (view into wasm
-    /// memory; copy it if you need it past the next call).
-    pub fn frame(&mut self) -> js_sys::Uint8Array {
-        unsafe { js_sys::Uint8Array::view(self.engine.frame()) }
-    }
-
-    /// Build a frame packet from browser `getByteFrequencyData` output.
-    pub fn frame_from_bytes(&mut self, bytes: &[u8]) -> js_sys::Uint8Array {
-        unsafe { js_sys::Uint8Array::view(self.engine.frame_from_bytes(bytes)) }
-    }
-
-    pub fn packet_len(&self) -> usize {
-        overtone_core::engine::packet_len_for(self.engine.config().height)
+    /// Analyse pending audio and render the view described by `view_json`
+    /// (a JSON `ViewRequest`). Returns the frame packet as a view into wasm
+    /// memory; copy it if you need it past the next call.
+    pub fn frame(&mut self, view_json: &str) -> Result<js_sys::Uint8Array, JsError> {
+        let view: ViewRequest =
+            serde_json::from_str(view_json).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(unsafe { js_sys::Uint8Array::view(self.engine.frame(view)) })
     }
 }

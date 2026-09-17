@@ -3,9 +3,11 @@
  * All values little-endian.
  */
 export const PACKET_MAGIC = 0x4e54564f;
-export const PACKET_VERSION = 1;
-export const HEADER_LEN = 40;
+export const PACKET_VERSION = 2;
+export const HEADER_LEN = 68;
 export const FLAG_NEW_AUDIO = 1;
+export const FLAG_LIVE = 2;
+export const FLAG_FULL = 4;
 
 export interface FramePacket {
   seq: number;
@@ -16,8 +18,21 @@ export interface FramePacket {
   /** Index into EngineInfo.notes, or -1. */
   note: number;
   sampleRate: number;
-  /** RGBA column, index 0 = top row (height * 4 bytes). */
-  column: Uint8ClampedArray;
+  /** Pixels to move the existing timeline right (negative = left). */
+  shift: number;
+  /** x position of the first included column. */
+  columnStart: number;
+  /** Number of timeline columns included. */
+  columns: number;
+  /** Timeline width the engine rendered for. */
+  width: number;
+  /** Time at the newest edge of the view, seconds. */
+  viewEnd: number;
+  historyStart: number;
+  historyEnd: number;
+  pxPerSecond: number;
+  /** RGBA, row-major, `columns × height`. */
+  pixels: Uint8ClampedArray;
   /** Live bar length per row, index 0 = top row. */
   live: Float32Array;
 }
@@ -32,10 +47,11 @@ export function parsePacket(bytes: Uint8Array): FramePacket {
     throw new Error(`unsupported frame packet version ${version}`);
   }
   const height = view.getUint32(12, true);
-  const columnOffset = bytes.byteOffset + HEADER_LEN;
-  const liveOffset = columnOffset + height * 4;
-  // The live floats are 4-byte aligned only when the packet start is; copy
-  // when it is not (wasm views are aligned, IPC ArrayBuffers start at 0).
+  const columns = view.getUint32(40, true);
+  const pixelsOffset = bytes.byteOffset + HEADER_LEN;
+  const pixelsLen = columns * height * 4;
+  const liveOffset = pixelsOffset + pixelsLen;
+  // Float32Array needs 4-byte alignment; copy when the packet is not aligned.
   const live =
     liveOffset % 4 === 0
       ? new Float32Array(bytes.buffer, liveOffset, height)
@@ -48,7 +64,15 @@ export function parsePacket(bytes: Uint8Array): FramePacket {
     targetHz: view.getFloat32(24, true),
     note: view.getInt32(28, true),
     sampleRate: view.getFloat32(32, true),
-    column: new Uint8ClampedArray(bytes.buffer, columnOffset, height * 4),
+    shift: view.getInt32(36, true),
+    columnStart: view.getUint32(64, true),
+    columns,
+    width: view.getUint32(44, true),
+    viewEnd: view.getFloat32(48, true),
+    historyStart: view.getFloat32(52, true),
+    historyEnd: view.getFloat32(56, true),
+    pxPerSecond: view.getFloat32(60, true),
+    pixels: new Uint8ClampedArray(bytes.buffer, pixelsOffset, pixelsLen),
     live,
   };
 }

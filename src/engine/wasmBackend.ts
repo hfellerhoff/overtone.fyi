@@ -1,6 +1,6 @@
 import init, { WasmEngine } from "../wasm/pkg/overtone_wasm.js";
 import type { AnalysisBackend } from "./backend";
-import type { CaptureStatus, DisplayConfig, EngineInfo } from "./types";
+import type { CaptureStatus, DisplayConfig, EngineInfo, ViewRequest } from "./types";
 
 const SAMPLE_RATE = 48000;
 
@@ -115,10 +115,10 @@ export class WasmBackend implements AnalysisBackend {
     return this.engine.label_strip().slice();
   }
 
-  async frame(): Promise<Uint8Array | null> {
+  async frame(view: ViewRequest): Promise<Uint8Array | null> {
     for (const chunk of this.pending) this.engine.push_samples(chunk);
     this.pending.length = 0;
-    return this.engine.frame();
+    return this.engine.frame(JSON.stringify(view));
   }
 
   async dispose(): Promise<void> {

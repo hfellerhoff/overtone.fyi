@@ -13,9 +13,24 @@ All audio analysis is written in Rust and shared between both targets:
 | `crates/overtone-wasm` | `wasm-bindgen` wrapper used by the website. |
 | `src-tauri` | Tauri desktop app: microphone capture with `cpal`, engine behind binary IPC. |
 
-The React frontend (`src/`) never touches audio data. Each animation frame it
-asks the active backend (`src/engine/`) for a frame packet and blits it onto
-the canvases (`src/render/renderer.ts`).
+The engine analyses audio every `fftSize / 32` samples and records each
+spectrum in a ring buffer (256 MB by default, roughly 45 minutes at the
+default settings), independent of the display. The React frontend (`src/`)
+never touches audio data. Each animation frame it asks the active backend
+(`src/engine/`) for the view it wants (timeline width, pixels per second,
+and where in time the newest edge sits) and blits the returned packet onto
+the canvases (`src/render/renderer.ts`). The engine sends only the columns
+that changed, or a full redraw after a zoom.
+
+## Controls
+
+| Input | Action |
+|-------|--------|
+| Space | Start / stop capture |
+| Wheel or pinch over the spectrogram | Zoom the frequency range around the cursor |
+| Shift + wheel, or horizontal wheel / swipe | Scroll backward and forward in time |
+| Alt + wheel | Pan the frequency range |
+| Esc or 0, or the "back to live" button | Reset zoom and return to live |
 
 * **Desktop**: `cpal` captures audio on a realtime thread → lock-free ring
   buffer → engine. The webview calls the `frame` command and receives raw

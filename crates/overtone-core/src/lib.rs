@@ -16,6 +16,7 @@
 pub mod analyser;
 pub mod color;
 pub mod engine;
+pub mod history;
 pub mod labels;
 pub mod mapping;
 pub mod packet;
@@ -23,7 +24,7 @@ pub mod pitch;
 
 pub use analyser::Analyser;
 pub use color::Coloring;
-pub use engine::{Engine, EngineConfig, LABEL_WIDTH, LIVE_WIDTH};
+pub use engine::{Engine, EngineConfig, ViewRequest, LABEL_WIDTH, LIVE_WIDTH};
 pub use labels::Labeling;
 pub use mapping::Scale;
 pub use pitch::PitchResult;

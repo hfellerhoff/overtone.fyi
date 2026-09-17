@@ -1,13 +1,16 @@
 import { useAtom, useAtomValue } from "jotai";
-import { MicIcon, MicOffIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { MicIcon, MicOffIcon, RadioIcon } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import AnalysisInfo from "./components/AnalysisInfo";
 import FrequencyMarkers from "./components/FrequencyMarkers";
 import { useAnalysis } from "./engine/useAnalysis";
+import { panRange, zoomRange } from "./engine/viewport";
 import {
   canvasHeightAtom,
   isRecordingAtom,
+  TIMELINE_BASE_PIXELS_PER_SECOND,
   TIMESERIES_CANVAS_WIDTHS,
+  timelineSpeedAtom,
   timeseriesCanvasWidthAtom,
 } from "./lib/fft";
 import { useMediaQuery } from "./lib/utils";
@@ -32,7 +35,75 @@ export default function FFTCanvas() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const frequencyLabelCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const { renderer, info, error } = useAnalysis();
+  const { renderer, info, error, setViewport, isLive, historyEndRef } =
+    useAnalysis();
+  const infoRef = useRef(info);
+  infoRef.current = info;
+
+  /**
+   * Wheel on the spectrogram:
+   *  - plain vertical wheel / pinch (ctrl+wheel): zoom the frequency range
+   *    around the cursor,
+   *  - shift+wheel or horizontal wheel: scroll through time,
+   *  - alt+wheel: pan the frequency range.
+   */
+  const handleWheel = useCallback(
+    (ev: WheelEvent) => {
+      const current = infoRef.current;
+      if (!current) return;
+      ev.preventDefault();
+      const target = ev.currentTarget as HTMLElement;
+      const rect = target.getBoundingClientRect();
+      const nyquist = current.sampleRate / 2;
+      const horizontal =
+        ev.shiftKey || Math.abs(ev.deltaX) > Math.abs(ev.deltaY);
+      const delta = horizontal
+        ? ev.shiftKey && ev.deltaX === 0
+          ? ev.deltaY
+          : ev.deltaX
+        : ev.deltaY;
+      const pixels = ev.deltaMode === 1 ? delta * 16 : ev.deltaMode === 2 ? delta * rect.height : delta;
+
+      if (horizontal) {
+        // Positive deltaX (scroll right / swipe left) moves forward in time.
+        const canvasPxPerScreenPx = timeseriesCanvasWidth / rect.width;
+        const pxPerSecond = TIMELINE_BASE_PIXELS_PER_SECOND * timelineSpeedRef.current;
+        const seconds = (pixels * canvasPxPerScreenPx) / pxPerSecond;
+        setViewport((v) => {
+          const end = v.viewEnd ?? historyEndRef.current;
+          return { ...v, viewEnd: end + seconds };
+        });
+        return;
+      }
+
+      const anchor = 1 - (ev.clientY - rect.top) / rect.height;
+      setViewport((v) => {
+        const range = v.range ?? current.range;
+        if (ev.altKey) {
+          return { ...v, range: panRange(range, -pixels / rect.height, nyquist) };
+        }
+        const factor = Math.exp(-pixels * 0.002);
+        return { ...v, range: zoomRange(range, anchor, factor, nyquist) };
+      });
+    },
+    [setViewport, timeseriesCanvasWidth, historyEndRef],
+  );
+
+  const timelineSpeed = useAtomValue(timelineSpeedAtom);
+  const timelineSpeedRef = useRef(timelineSpeed);
+  timelineSpeedRef.current = timelineSpeed;
+
+  const mainRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, [handleWheel]);
+
+  const resetView = useCallback(() => {
+    setViewport(() => ({ range: null, viewEnd: null }));
+  }, [setViewport]);
 
   useLayoutEffect(() => {
     renderer.setCanvases(
@@ -46,11 +117,13 @@ export default function FFTCanvas() {
     const handleKeypress = (ev: KeyboardEvent) => {
       if (ev.key === " ") {
         setIsRecording((prev) => !prev);
+      } else if (ev.key === "Escape" || ev.key === "0") {
+        resetView();
       }
     };
     window.addEventListener("keydown", handleKeypress);
     return () => window.removeEventListener("keydown", handleKeypress);
-  }, [setIsRecording]);
+  }, [setIsRecording, resetView]);
 
   const isTablet = useMediaQuery("(max-width: 800px)");
   const isMobile = useMediaQuery("(max-width: 600px)");
@@ -111,7 +184,8 @@ export default function FFTCanvas() {
         </div>
       )}
       <main
-        className="flex gap-2 pt-2 overflow-hidden rounded-lg"
+        ref={mainRef}
+        className="relative flex gap-2 pt-2 overflow-hidden rounded-lg"
         style={{
           height: CANVAS_HEIGHT,
         }}
@@ -144,6 +218,15 @@ export default function FFTCanvas() {
         </div>
         <div className="relative w-full h-full overflow-hidden">
           <FrequencyMarkers markers={info?.markers ?? []} />
+          {!isLive && (
+            <button
+              className="absolute z-10 flex items-center gap-1 px-2 py-1 font-mono text-xs border rounded-md top-2 left-2 border-input bg-background/80 hover:bg-accent"
+              onClick={resetView}
+              title="Return to live (Esc)"
+            >
+              <RadioIcon size={12} /> Paused · back to live
+            </button>
+          )}
           <canvas
             ref={timeSeriesCanvasRef}
             className="w-full h-full bg-black border rounded-lg border-input"

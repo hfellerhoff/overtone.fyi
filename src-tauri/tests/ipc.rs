@@ -59,12 +59,22 @@ fn commands_return_binary_frames() {
     }
 
     for expected_seq in 1..=3u32 {
-        let frame = get_ipc_response(&webview, request("frame", serde_json::json!({}))).unwrap();
+        let frame = get_ipc_response(
+            &webview,
+            request(
+                "frame",
+                serde_json::json!({ "view": { "width": 300, "pxPerSecond": 120.0, "viewEnd": null } }),
+            ),
+        )
+        .unwrap();
         let bytes = match frame {
             InvokeResponseBody::Raw(bytes) => bytes,
             other => panic!("expected raw bytes, got {other:?}"),
         };
-        assert_eq!(bytes.len(), 40 + 1092 * 8);
+        let columns = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
+        // the first frame is a full redraw of 300 columns, later ones carry none
+        assert_eq!(columns, if expected_seq == 1 { 300 } else { 0 });
+        assert_eq!(bytes.len(), 68 + columns * 1092 * 4 + 1092 * 4);
         assert_eq!(&bytes[0..4], &0x4E54_564Fu32.to_le_bytes());
         assert_eq!(
             u32::from_le_bytes(bytes[8..12].try_into().unwrap()),

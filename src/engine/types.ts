@@ -35,6 +35,9 @@ export interface EngineInfo {
   range: FreqRange;
   /** Highest first. */
   markers: Marker[];
+  ticksPerSecond: number;
+  /** Seconds of history the memory budget can hold. */
+  historySeconds: number;
   notes: string[];
 }
 
@@ -43,4 +46,13 @@ export interface CaptureStatus {
   sampleRate: number;
   channels: number;
   device: string | null;
+}
+
+/** Mirrors `ViewRequest` in Rust. */
+export interface ViewRequest {
+  /** Timeline width in pixels. */
+  width: number;
+  pxPerSecond: number;
+  /** Newest edge of the timeline in seconds; null follows live. */
+  viewEnd: number | null;
 }

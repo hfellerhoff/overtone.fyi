@@ -1,5 +1,5 @@
 import { useAtomValue } from "jotai";
-import { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   analyzerScaleAtom,
   canvasHeightAtom,
@@ -9,17 +9,27 @@ import {
   isRecordingAtom,
   TIMELINE_BASE_PIXELS_PER_SECOND,
   timelineSpeedAtom,
+  timeseriesCanvasWidthAtom,
 } from "@/lib/fft";
 import { SpectrogramRenderer } from "@/render/renderer";
 import { createBackend, type AnalysisBackend } from "./backend";
 import { resetLiveValues, setLiveValues } from "./liveStore";
-import type { DisplayConfig, EngineInfo } from "./types";
+import { FLAG_LIVE } from "./packet";
+import type { DisplayConfig, EngineInfo, FreqRange } from "./types";
+import type { Viewport } from "./viewport";
 
 export interface AnalysisHandle {
   renderer: SpectrogramRenderer;
   info: EngineInfo | null;
   backendKind: AnalysisBackend["kind"] | null;
   error: string | null;
+  /** Current view; mutate through `setViewport`. */
+  viewport: Viewport;
+  setViewport(update: (v: Viewport) => Viewport): void;
+  /** Whether the timeline is following the newest audio. */
+  isLive: boolean;
+  /** Newest recorded time in seconds, updated every frame. */
+  historyEndRef: React.MutableRefObject<number>;
 }
 
 /**
@@ -36,18 +46,41 @@ export function useAnalysis(): AnalysisHandle {
   const [backend, setBackend] = useState<AnalysisBackend | null>(null);
   const [info, setInfo] = useState<EngineInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isLive, setIsLive] = useState(true);
+  const historyEndRef = useRef(0);
 
   const isRecording = useAtomValue(isRecordingAtom);
   const fftSize = useAtomValue(fftSizeAtom);
   const height = useAtomValue(canvasHeightAtom);
+  const width = useAtomValue(timeseriesCanvasWidthAtom);
   const scale = useAtomValue(analyzerScaleAtom);
   const coloring = useAtomValue(coloringMethodAtom);
   const labeling = useAtomValue(frequencyLabelMethodAtom);
   const timelineSpeed = useAtomValue(timelineSpeedAtom);
 
+  // The viewport changes on every wheel event; keep it in a ref that the
+  // frame loop reads, and mirror the frequency range into state so the
+  // engine gets reconfigured (and the labels redrawn).
+  const viewportRef = useRef<Viewport>({ range: null, viewEnd: null });
+  const [range, setRange] = useState<FreqRange | null>(null);
+  const setViewport = useCallback((update: (v: Viewport) => Viewport) => {
+    const next = update(viewportRef.current);
+    viewportRef.current = next;
+    setRange((prev) =>
+      prev?.minHz === next.range?.minHz && prev?.maxHz === next.range?.maxHz
+        ? prev
+        : next.range,
+    );
+  }, []);
+
+  // Changing scale resets any zoom.
+  const previousScale = useRef(scale);
   useEffect(() => {
-    renderer.setTimelineSpeed(TIMELINE_BASE_PIXELS_PER_SECOND * timelineSpeed);
-  }, [renderer, timelineSpeed]);
+    if (previousScale.current !== scale) {
+      previousScale.current = scale;
+      setViewport((v) => ({ ...v, range: null }));
+    }
+  }, [scale, setViewport]);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,10 +103,12 @@ export function useAnalysis(): AnalysisHandle {
 
   // Configuration changes: reconfigure the engine and redraw the label strip.
   const infoRef = useRef<EngineInfo | null>(null);
+  const configRef = useRef<DisplayConfig | null>(null);
   useEffect(() => {
     if (!backend) return;
     let cancelled = false;
-    const config: DisplayConfig = { fftSize, height, scale, coloring, labeling };
+    const config: DisplayConfig = { fftSize, height, scale, coloring, labeling, range };
+    configRef.current = config;
     (async () => {
       try {
         const next = await backend.configure(config);
@@ -89,7 +124,7 @@ export function useAnalysis(): AnalysisHandle {
     return () => {
       cancelled = true;
     };
-  }, [backend, fftSize, height, scale, coloring, labeling, renderer]);
+  }, [backend, fftSize, height, scale, coloring, labeling, range, renderer]);
 
   // Capture + frame loop.
   useEffect(() => {
@@ -100,16 +135,27 @@ export function useAnalysis(): AnalysisHandle {
     const loop = async () => {
       if (cancelled) return;
       try {
-        const bytes = await backend.frame();
+        const bytes = await backend.frame({
+          width,
+          pxPerSecond: TIMELINE_BASE_PIXELS_PER_SECOND * timelineSpeed,
+          viewEnd: viewportRef.current.viewEnd,
+        });
         if (cancelled) return;
         if (bytes) {
-          const packet = renderer.draw(bytes, performance.now());
+          const packet = renderer.draw(bytes);
           const notes = infoRef.current?.notes;
           setLiveValues({
             pitchHz: packet.pitchHz,
             targetHz: packet.targetHz,
             note: packet.note >= 0 && notes ? notes[packet.note] : "",
           });
+          historyEndRef.current = packet.historyEnd;
+          const live = (packet.flags & FLAG_LIVE) !== 0;
+          if (live && viewportRef.current.viewEnd !== null) {
+            // scrolled back to the newest edge: follow live again
+            viewportRef.current = { ...viewportRef.current, viewEnd: null };
+          }
+          setIsLive(live);
         }
       } catch (e) {
         setError(String(e));
@@ -122,9 +168,9 @@ export function useAnalysis(): AnalysisHandle {
       .start()
       .then((status) => {
         if (cancelled) return;
-        if (status.sampleRate !== infoRef.current?.sampleRate) {
+        if (status.sampleRate !== infoRef.current?.sampleRate && configRef.current) {
           // The device's real sample rate can differ from the default.
-          backend.configure({ fftSize, height, scale, coloring, labeling }).then((next) => {
+          backend.configure(configRef.current).then((next) => {
             if (cancelled) return;
             infoRef.current = next;
             setInfo(next);
@@ -140,9 +186,16 @@ export function useAnalysis(): AnalysisHandle {
       backend.stop().catch(() => undefined);
       resetLiveValues();
     };
-    // Config values are read once on (re)start; changes go through `configure`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend, isRecording, renderer]);
+  }, [backend, isRecording, renderer, width, timelineSpeed]);
 
-  return { renderer, info, backendKind: backend?.kind ?? null, error };
+  return {
+    renderer,
+    info,
+    backendKind: backend?.kind ?? null,
+    error,
+    viewport: viewportRef.current,
+    setViewport,
+    isLive,
+    historyEndRef,
+  };
 }

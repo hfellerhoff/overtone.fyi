@@ -5,33 +5,43 @@
 //! | offset | type | field |
 //! |--------|------|-------|
 //! | 0  | u32 | magic `0x4E54564F` ("OVTN") |
-//! | 4  | u32 | version |
+//! | 4  | u32 | version (2) |
 //! | 8  | u32 | frame sequence number |
 //! | 12 | u32 | height (rows) |
-//! | 16 | u32 | flags (bit 0: new audio since previous frame) |
+//! | 16 | u32 | flags (bit 0: new audio, bit 1: following live, bit 2: full redraw) |
 //! | 20 | f32 | detected pitch (Hz, 0 = none) |
 //! | 24 | f32 | nearest note frequency (Hz, 0 = none) |
 //! | 28 | i32 | nearest note index into `info.notes` (-1 = none) |
 //! | 32 | f32 | sample rate |
-//! | 36 | u32 | reserved |
-//! | 40 | u8 × 4·height | new spectrogram column, RGBA, index 0 = top row |
-//! | 40 + 4·height | f32 × height | live bar length per row, index 0 = top row |
+//! | 36 | i32 | shift: pixels to move the existing timeline right (negative = left) |
+//! | 40 | u32 | columns: number of timeline columns included (== width for a full redraw) |
+//! | 44 | u32 | width of the timeline in pixels |
+//! | 64 | u32 | column_start: x position of the first included column |
+//! | 48 | f32 | time at the left (newest) edge of the view, seconds |
+//! | 52 | f32 | oldest recorded time, seconds |
+//! | 56 | f32 | newest recorded time, seconds |
+//! | 60 | f32 | timeline scale, pixels per second |
+//! | 68 | u8 × 4·columns·height | timeline pixels, RGBA, row-major, x = 0 is newest |
+//! | 68 + 4·columns·height | f32 × height | live bar length per row, index 0 = top row |
 
 pub const MAGIC: u32 = 0x4E54_564F;
-pub const VERSION: u32 = 1;
-pub const HEADER_LEN: usize = 40;
+pub const VERSION: u32 = 2;
+pub const HEADER_LEN: usize = 68;
 pub const FLAG_NEW_AUDIO: u32 = 1;
+pub const FLAG_LIVE: u32 = 2;
+pub const FLAG_FULL: u32 = 4;
 
-pub const fn column_offset() -> usize {
+pub const fn columns_offset() -> usize {
     HEADER_LEN
 }
 
-pub const fn live_offset(height: usize) -> usize {
-    HEADER_LEN + height * 4
+pub const fn live_offset(columns: usize, height: usize) -> usize {
+    HEADER_LEN + columns * height * 4
 }
 
-pub const fn packet_len(height: usize) -> usize {
-    HEADER_LEN + height * 8
+/// Length of a packet carrying `columns` timeline columns.
+pub const fn packet_len(columns: usize, height: usize) -> usize {
+    live_offset(columns, height) + height * 4
 }
 
 pub struct Header {
@@ -42,6 +52,14 @@ pub struct Header {
     pub target_hz: f32,
     pub note: i32,
     pub sample_rate: f32,
+    pub shift: i32,
+    pub column_start: u32,
+    pub columns: u32,
+    pub width: u32,
+    pub view_end: f32,
+    pub history_start: f32,
+    pub history_end: f32,
+    pub px_per_second: f32,
 }
 
 impl Header {
@@ -56,6 +74,13 @@ impl Header {
         out[24..28].copy_from_slice(&self.target_hz.to_le_bytes());
         out[28..32].copy_from_slice(&self.note.to_le_bytes());
         out[32..36].copy_from_slice(&self.sample_rate.to_le_bytes());
-        out[36..40].copy_from_slice(&0u32.to_le_bytes());
+        out[36..40].copy_from_slice(&self.shift.to_le_bytes());
+        out[40..44].copy_from_slice(&self.columns.to_le_bytes());
+        out[44..48].copy_from_slice(&self.width.to_le_bytes());
+        out[48..52].copy_from_slice(&self.view_end.to_le_bytes());
+        out[52..56].copy_from_slice(&self.history_start.to_le_bytes());
+        out[56..60].copy_from_slice(&self.history_end.to_le_bytes());
+        out[60..64].copy_from_slice(&self.px_per_second.to_le_bytes());
+        out[64..68].copy_from_slice(&self.column_start.to_le_bytes());
     }
 }

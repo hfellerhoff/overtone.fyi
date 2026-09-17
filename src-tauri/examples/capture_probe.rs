@@ -1,7 +1,7 @@
 //! Starts microphone capture for two seconds and reports what the engine
 //! sees. Useful to verify device access outside of the GUI:
 //! `cargo run -p overtone-desktop --example capture_probe`
-use overtone_core::{Engine, EngineConfig};
+use overtone_core::{Engine, EngineConfig, ViewRequest};
 use std::time::{Duration, Instant};
 
 fn main() {
@@ -42,7 +42,13 @@ fn main() {
             engine.push_mono(&buf[..n]);
         }
         let t = Instant::now();
-        let packet_len = engine.frame().len();
+        let packet_len = engine
+            .frame(ViewRequest {
+                width: 2048,
+                px_per_second: 120.0,
+                view_end: None,
+            })
+            .len();
         frames += 1;
         if frames % 30 == 0 {
             let p = engine.last_pitch();

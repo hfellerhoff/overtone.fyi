@@ -8,7 +8,7 @@ pub mod capture;
 use capture::{Capture, DeviceInfo};
 use overtone_core::engine::{EngineConfig, EngineInfo};
 use overtone_core::mapping::FreqRange;
-use overtone_core::{Coloring, Engine, Labeling, Scale};
+use overtone_core::{Coloring, Engine, Labeling, Scale, ViewRequest};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,6 +39,7 @@ impl DisplayConfig {
             coloring: self.coloring,
             labeling: self.labeling,
             range: self.range,
+            history_bytes: overtone_core::engine::DEFAULT_HISTORY_BYTES,
         }
     }
 }
@@ -153,10 +154,10 @@ fn label_strip(state: State<'_, AppState>) -> Response {
     Response::new(state.engine.lock().label_strip().to_vec())
 }
 
-/// Drain captured audio into the engine and return the next frame packet
-/// (see `overtone_core::packet` for the layout).
+/// Drain captured audio into the engine and return the next frame packet for
+/// the requested view (see `overtone_core::packet` for the layout).
 #[tauri::command(async)]
-fn frame(state: State<'_, AppState>) -> Response {
+fn frame(state: State<'_, AppState>, view: ViewRequest) -> Response {
     let started = std::time::Instant::now();
     let mut engine = state.engine.lock();
     let mut drained = 0u64;
@@ -174,7 +175,7 @@ fn frame(state: State<'_, AppState>) -> Response {
             }
         }
     }
-    let packet = engine.frame().to_vec();
+    let packet = engine.frame(view).to_vec();
     if state.log {
         let frames = state.frames.fetch_add(1, Ordering::Relaxed) + 1;
         let samples = state.samples.fetch_add(drained, Ordering::Relaxed) + drained;
