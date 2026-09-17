@@ -13,9 +13,14 @@ All audio analysis is written in Rust and shared between both targets:
 | `crates/overtone-wasm` | `wasm-bindgen` wrapper used by the website. |
 | `src-tauri` | Tauri desktop app: microphone capture with `cpal`, engine behind binary IPC. |
 
-The engine analyses audio every `fftSize / 32` samples and records each
-spectrum in a ring buffer (256 MB by default, roughly 45 minutes at the
-default settings), independent of the display. The React frontend (`src/`)
+The engine runs one FFT per frequency band, with a shorter window for each
+higher band (the "Bands" setting: Balanced halves the window every octave
+above 250 Hz, Sharp starts at 125 Hz and goes further, Single uses one
+window). Every band's window is a fixed fraction of the base "Resolution"
+size, so that setting scales them all together. Each tick (every eighth of
+the shortest window) the bands are stitched into one composite spectrum and
+recorded in a ring buffer (256 MB by default, about 20 minutes at the default
+settings), independent of the display. The React frontend (`src/`)
 never touches audio data. Each animation frame it asks the active backend
 (`src/engine/`) for the view it wants (timeline width, pixels per second,
 and where in time the newest edge sits) and blits the returned packet onto

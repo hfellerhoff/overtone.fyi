@@ -2,6 +2,7 @@ import { useAtomValue } from "jotai";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   analyzerScaleAtom,
+  bandPresetAtom,
   canvasHeightAtom,
   coloringMethodAtom,
   fftSizeAtom,
@@ -51,6 +52,7 @@ export function useAnalysis(): AnalysisHandle {
 
   const isRecording = useAtomValue(isRecordingAtom);
   const fftSize = useAtomValue(fftSizeAtom);
+  const bands = useAtomValue(bandPresetAtom);
   const height = useAtomValue(canvasHeightAtom);
   const width = useAtomValue(timeseriesCanvasWidthAtom);
   const scale = useAtomValue(analyzerScaleAtom);
@@ -107,7 +109,15 @@ export function useAnalysis(): AnalysisHandle {
   useEffect(() => {
     if (!backend) return;
     let cancelled = false;
-    const config: DisplayConfig = { fftSize, height, scale, coloring, labeling, range };
+    const config: DisplayConfig = {
+      fftSize,
+      height,
+      scale,
+      coloring,
+      labeling,
+      range,
+      bands,
+    };
     configRef.current = config;
     (async () => {
       try {
@@ -124,7 +134,7 @@ export function useAnalysis(): AnalysisHandle {
     return () => {
       cancelled = true;
     };
-  }, [backend, fftSize, height, scale, coloring, labeling, range, renderer]);
+  }, [backend, fftSize, bands, height, scale, coloring, labeling, range, renderer]);
 
   // Capture + frame loop.
   useEffect(() => {

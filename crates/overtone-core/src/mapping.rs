@@ -4,6 +4,7 @@
 //! only in the range they show by default. The view can be zoomed to any
 //! sub-range (see [`FreqRange`]).
 
+use crate::spectrum::Layout;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,11 +114,6 @@ impl FreqRange {
     }
 }
 
-/// Width of one FFT bin in Hz.
-pub fn bin_hz(sample_rate: f64, fft_size: usize) -> f64 {
-    sample_rate / fft_size as f64
-}
-
 /// How a row reads the spectrum.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RowBins {
@@ -141,9 +137,7 @@ pub struct RowMap {
 }
 
 impl RowMap {
-    pub fn build(range: FreqRange, height: usize, sample_rate: f64, fft_size: usize) -> Self {
-        let bin_hz = bin_hz(sample_rate, fft_size);
-        let bin_count = fft_size / 2;
+    pub fn build(range: FreqRange, height: usize, layout: &Layout) -> Self {
         let edges: Vec<f64> = (0..=height)
             .map(|i| range.hz_at(i as f64 / height as f64))
             .collect();
@@ -154,18 +148,25 @@ impl RowMap {
             let hi_hz = edges[i + 1];
             let centre = (lo_hz * hi_hz).sqrt();
             hz.push(centre);
-            // bins whose centre lies inside the row
-            let lo_bin = (lo_hz / bin_hz).ceil().max(0.0) as usize;
-            let hi_bin = ((hi_hz / bin_hz).ceil() as usize).saturating_sub(1);
-            let row = if hi_bin > lo_bin && hi_bin < bin_count {
+            let Some(seg) = layout.segment_for(centre) else {
+                bins.push(RowBins::None);
+                continue;
+            };
+            // composite indices of the bins whose centre lies inside the row,
+            // clamped to the segment this row belongs to
+            let lo_bin = seg.position(lo_hz).ceil().max(seg.offset as f64) as usize;
+            let hi_bin = (seg.position(hi_hz).ceil() as usize)
+                .saturating_sub(1)
+                .min(seg.end() - 1);
+            let row = if hi_bin > lo_bin {
                 RowBins::Max {
                     lo: lo_bin,
                     hi: hi_bin,
                 }
             } else {
-                let pos = centre / bin_hz;
+                let pos = seg.position(centre);
                 let k = pos.floor() as usize;
-                if k + 1 < bin_count {
+                if k + 1 < seg.end() && k >= seg.offset {
                     RowBins::Interpolate {
                         k,
                         frac: (pos - k as f64) as f32,
@@ -188,7 +189,7 @@ impl RowMap {
         self.hz.len()
     }
 
-    /// Value of one row from a byte spectrum, 0..=255.
+    /// Value of one row from a composite byte spectrum, 0..=255.
     #[inline]
     pub fn value(&self, i: usize, spectrum: &[u8]) -> f32 {
         match self.bins[i] {
@@ -248,8 +249,7 @@ mod tests {
         let map = RowMap::build(
             FreqRange::preset(Scale::Piano, 48000.0),
             1092,
-            48000.0,
-            8192,
+            &Layout::single(48000.0, 8192),
         );
         let bin = 48000.0 / 8192.0;
         assert_eq!(map.height(), 1092);
@@ -275,8 +275,37 @@ mod tests {
     }
 
     #[test]
+    fn multi_resolution_rows_read_their_bands_segment() {
+        let layout = Layout::build(48000.0, 32768, &crate::spectrum::default_bands());
+        let map = RowMap::build(FreqRange::new(30.0, 20000.0), 800, &layout);
+        for i in 0..map.height() {
+            let seg = layout.segment_for(map.hz[i]).unwrap();
+            let (lo, hi) = match map.bins[i] {
+                RowBins::Interpolate { k, .. } => (k, k + 1),
+                RowBins::Max { lo, hi } => (lo, hi),
+                RowBins::None => panic!("row {i} unmapped"),
+            };
+            assert!(
+                lo >= seg.offset && hi < seg.end(),
+                "row {i} ({} Hz) outside its segment",
+                map.hz[i]
+            );
+            // the bin actually read sits at the row's frequency
+            let hz_of = |idx: usize| (idx - seg.offset + seg.first_bin) as f64 * seg.bin_hz;
+            assert!(
+                hz_of(lo) <= map.hz[i] + seg.bin_hz && hz_of(hi) >= map.hz[i] - seg.bin_hz,
+                "row {i}"
+            );
+        }
+    }
+
+    #[test]
     fn wide_rows_take_the_loudest_bin() {
-        let map = RowMap::build(FreqRange::new(1000.0, 20000.0), 100, 48000.0, 1024);
+        let map = RowMap::build(
+            FreqRange::new(1000.0, 20000.0),
+            100,
+            &Layout::single(48000.0, 1024),
+        );
         let mut spectrum = vec![0u8; 512];
         let RowBins::Max { lo, hi } = map.bins[50] else {
             panic!("expected a wide row");
@@ -284,7 +313,11 @@ mod tests {
         spectrum[lo] = 10;
         spectrum[hi] = 200;
         assert_eq!(map.value(50, &spectrum), 200.0);
-        let map = RowMap::build(FreqRange::new(100.0, 110.0), 100, 48000.0, 8192);
+        let map = RowMap::build(
+            FreqRange::new(100.0, 110.0),
+            100,
+            &Layout::single(48000.0, 8192),
+        );
         assert!(matches!(map.bins[0], RowBins::Interpolate { .. }));
         let mut spectrum = vec![0u8; 4096];
         let RowBins::Interpolate { k, frac } = map.bins[0] else {

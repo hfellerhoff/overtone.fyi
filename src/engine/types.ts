@@ -1,6 +1,8 @@
 export type ColoringMethod = "sigmoid" | "detailed";
 export type FrequencyLabelMethod = "linear" | "piano";
 export type AnalyzerScale = "piano" | "logarithmic";
+/** Relative window layout across frequency bands; mirrors `BandPreset`. */
+export type BandPreset = "single" | "balanced" | "sharp";
 
 /** Display settings owned by the UI; mirrors `DisplayConfig` in Rust. */
 export interface DisplayConfig {
@@ -11,6 +13,7 @@ export interface DisplayConfig {
   labeling: FrequencyLabelMethod;
   /** Visible frequency range; omit for the scale's preset. */
   range?: FreqRange | null;
+  bands: BandPreset;
 }
 
 export interface FreqRange {
@@ -38,6 +41,8 @@ export interface EngineInfo {
   ticksPerSecond: number;
   /** Seconds of history the memory budget can hold. */
   historySeconds: number;
+  /** `[minHz, maxHz, fftSize]` per band, ascending. */
+  bands: [number, number, number][];
   notes: string[];
 }
 

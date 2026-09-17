@@ -213,6 +213,7 @@ pub fn frequency_markers(rows: &RowMap, min_gap: f64) -> Vec<Marker> {
 mod tests {
     use super::*;
     use crate::mapping::{pitch_by_number, FreqRange, Scale};
+    use crate::spectrum::Layout;
 
     fn px(out: &[u8], width: usize, x: usize, y: usize) -> [u8; 3] {
         let o = (y * width + x) * 4;
@@ -224,8 +225,7 @@ mod tests {
         let rows = RowMap::build(
             FreqRange::preset(Scale::Piano, 48000.0),
             1092,
-            48000.0,
-            8192,
+            &Layout::single(48000.0, 8192),
         );
         let mut out = Vec::new();
         render_label_strip(&rows, Labeling::Piano, 64, &mut out);
@@ -257,7 +257,11 @@ mod tests {
 
     #[test]
     fn zoomed_out_piano_shows_only_octave_lines() {
-        let rows = RowMap::build(FreqRange::new(20.0, 20000.0), 100, 48000.0, 8192);
+        let rows = RowMap::build(
+            FreqRange::new(20.0, 20000.0),
+            100,
+            &Layout::single(48000.0, 8192),
+        );
         let mut out = Vec::new();
         render_label_strip(&rows, Labeling::Piano, 64, &mut out);
         let lines = (0..100)
@@ -269,7 +273,11 @@ mod tests {
 
     #[test]
     fn hz_grid_marks_decades_and_minor_lines() {
-        let rows = RowMap::build(FreqRange::new(20.0, 20000.0), 1092, 48000.0, 8192);
+        let rows = RowMap::build(
+            FreqRange::new(20.0, 20000.0),
+            1092,
+            &Layout::single(48000.0, 8192),
+        );
         let mut out = Vec::new();
         render_label_strip(&rows, Labeling::Linear, 64, &mut out);
         let major = (0..1092)
@@ -286,7 +294,11 @@ mod tests {
 
     #[test]
     fn markers_are_round_and_spaced() {
-        let rows = RowMap::build(FreqRange::new(20.0, 20000.0), 1092, 48000.0, 8192);
+        let rows = RowMap::build(
+            FreqRange::new(20.0, 20000.0),
+            1092,
+            &Layout::single(48000.0, 8192),
+        );
         let markers = frequency_markers(&rows, 0.03);
         let labels: Vec<&str> = markers.iter().map(|m| m.label.as_str()).collect();
         assert!(labels.contains(&"100"));

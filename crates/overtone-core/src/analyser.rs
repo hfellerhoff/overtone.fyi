@@ -169,6 +169,11 @@ impl Analyser {
         &self.magnitudes
     }
 
+    /// The bytes computed by the last [`Self::byte_frequency_data`] call.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
     /// Equivalent of `AnalyserNode.getByteFrequencyData`.
     pub fn byte_frequency_data(&mut self) -> &[u8] {
         self.analyse();

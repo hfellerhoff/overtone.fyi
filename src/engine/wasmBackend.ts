@@ -1,8 +1,15 @@
 import init, { WasmEngine } from "../wasm/pkg/overtone_wasm.js";
 import type { AnalysisBackend } from "./backend";
 import type { CaptureStatus, DisplayConfig, EngineInfo, ViewRequest } from "./types";
+import { bandsForPreset } from "./bands";
 
 const SAMPLE_RATE = 48000;
+
+/** Translate the UI's display config into the engine's `EngineConfig`. */
+function engineConfig(config: DisplayConfig, sampleRate: number) {
+  const { bands, ...rest } = config;
+  return { ...rest, sampleRate, bands: bandsForPreset(bands) };
+}
 
 /**
  * Browser backend: an AudioWorklet captures PCM and the Rust engine compiled
@@ -32,10 +39,9 @@ export class WasmBackend implements AnalysisBackend {
       scale: "piano",
       coloring: "detailed",
       labeling: "piano",
+      bands: "balanced",
     };
-    const engine = new WasmEngine(
-      JSON.stringify({ ...config, sampleRate: SAMPLE_RATE }),
-    );
+    const engine = new WasmEngine(JSON.stringify(engineConfig(config, SAMPLE_RATE)));
     return new WasmBackend(engine, config);
   }
 
@@ -85,7 +91,7 @@ export class WasmBackend implements AnalysisBackend {
     this.node = node;
     if (audioContext.sampleRate !== SAMPLE_RATE) {
       this.engine.configure(
-        JSON.stringify({ ...this.config, sampleRate: audioContext.sampleRate }),
+        JSON.stringify(engineConfig(this.config, audioContext.sampleRate)),
       );
     }
     this.engine.clear();
@@ -106,7 +112,7 @@ export class WasmBackend implements AnalysisBackend {
   async configure(config: DisplayConfig): Promise<EngineInfo> {
     this.config = config;
     this.engine.configure(
-      JSON.stringify({ ...config, sampleRate: this.status().sampleRate }),
+      JSON.stringify(engineConfig(config, this.status().sampleRate)),
     );
     return JSON.parse(this.engine.info_json()) as EngineInfo;
   }

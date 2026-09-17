@@ -16,6 +16,7 @@ use crate::packet::{self, Header, FLAG_FULL, FLAG_LIVE, FLAG_NEW_AUDIO};
 use crate::pitch::{
     detect_pitch, overtone_buckets, pitch_table, spectral_peaks, Bucket, Pitch, PitchResult,
 };
+use crate::spectrum::{default_bands, validate_bands, Band, Layout};
 use serde::{Deserialize, Serialize};
 
 /// Width of the frequency label strip in pixels.
@@ -32,11 +33,10 @@ pub const MAX_PENDING_SECONDS: f64 = 8.0;
 /// Ticks folded into one timeline column are capped here when zoomed far out.
 pub const MAX_TICKS_PER_COLUMN: usize = 64;
 
-/// Samples between analysis ticks. Scaling with the FFT size keeps the
-/// history data rate constant (16 bytes per sample) and the tick interval
-/// well below the window length.
-pub const fn hop(fft_size: usize) -> usize {
-    fft_size / 32
+/// Samples between analysis ticks, derived from the shortest window in use
+/// so fast events in the treble are not skipped over.
+pub const fn hop(shortest_fft: usize) -> usize {
+    shortest_fft / 8
 }
 
 fn default_history_bytes() -> usize {
@@ -59,6 +59,10 @@ pub struct EngineConfig {
     /// Memory budget for recorded spectra.
     #[serde(default = "default_history_bytes")]
     pub history_bytes: usize,
+    /// Frequency bands and the window length used for each, as a divisor of
+    /// `fft_size`. Defaults to halving the window per octave above 250 Hz.
+    #[serde(default = "default_bands")]
+    pub bands: Vec<Band>,
 }
 
 impl EngineConfig {
@@ -79,12 +83,27 @@ impl EngineConfig {
         if self.height < 2 || self.height > 8192 {
             return Err(format!("invalid height {}", self.height));
         }
-        Ok(())
+        validate_bands(&self.bands, self.fft_size)
+    }
+
+    pub fn layout(&self) -> Layout {
+        Layout::build(self.sample_rate, self.fft_size, &self.bands)
+    }
+
+    /// Samples between analysis ticks.
+    pub fn hop(&self) -> usize {
+        let shortest = self
+            .bands
+            .iter()
+            .map(|b| self.fft_size / b.divisor)
+            .min()
+            .unwrap_or(self.fft_size);
+        hop(shortest).max(1)
     }
 
     /// Analysis ticks per second.
     pub fn ticks_per_second(&self) -> f64 {
-        self.sample_rate / hop(self.fft_size) as f64
+        self.sample_rate / self.hop() as f64
     }
 }
 
@@ -99,6 +118,7 @@ impl Default for EngineConfig {
             labeling: Labeling::Piano,
             range: None,
             history_bytes: DEFAULT_HISTORY_BYTES,
+            bands: default_bands(),
         }
     }
 }
@@ -122,6 +142,8 @@ pub struct EngineInfo {
     pub ticks_per_second: f64,
     /// Seconds of history the budget can hold.
     pub history_seconds: f64,
+    /// Bands in use: `[minHz, maxHz, fftSize]` per band, ascending.
+    pub bands: Vec<(f64, f64, usize)>,
 }
 
 /// What the frontend wants to see this frame.
@@ -149,7 +171,10 @@ struct SentView {
 
 pub struct Engine {
     config: EngineConfig,
-    analyser: Analyser,
+    /// One analyser per distinct window length, largest first.
+    analysers: Vec<Analyser>,
+    layout: Layout,
+    composite: Vec<u8>,
     history: History,
     pending: Vec<f32>,
     rows: RowMap,
@@ -170,22 +195,20 @@ pub struct Engine {
 impl Engine {
     pub fn new(config: EngineConfig) -> Result<Self, String> {
         config.validate()?;
-        let analyser = Analyser::new(config.fft_size);
-        let rows = RowMap::build(
-            config.effective_range(),
-            config.height,
-            config.sample_rate,
-            config.fft_size,
-        );
+        let layout = config.layout();
+        let analysers = layout.fft_sizes().into_iter().map(Analyser::new).collect();
+        let rows = RowMap::build(config.effective_range(), config.height, &layout);
         let pitches = pitch_table();
         let mut label_strip = Vec::new();
         render_label_strip(&rows, config.labeling, LABEL_WIDTH, &mut label_strip);
         let lut = build_lut(config.coloring);
         let height = config.height;
-        let history = History::new(config.fft_size / 2, config.history_bytes);
+        let history = History::new(layout.len, config.history_bytes);
         Ok(Self {
             config,
-            analyser,
+            analysers,
+            composite: vec![0; layout.len],
+            layout,
             history,
             pending: Vec::new(),
             rows,
@@ -214,23 +237,23 @@ impl Engine {
         config.validate()?;
         let old = std::mem::replace(&mut self.config, config);
         let c = &self.config;
-        if c.fft_size != old.fft_size {
-            self.analyser = Analyser::new(c.fft_size);
+        let layout = c.layout();
+        let layout_changed = layout != self.layout;
+        if layout_changed {
+            self.analysers = layout.fft_sizes().into_iter().map(Analyser::new).collect();
+            self.composite = vec![0; layout.len];
+            self.layout = layout;
         }
-        if c.fft_size != old.fft_size
-            || c.sample_rate != old.sample_rate
-            || c.history_bytes != old.history_bytes
-        {
-            self.history = History::new(c.fft_size / 2, c.history_bytes);
+        if layout_changed || c.history_bytes != old.history_bytes {
+            self.history = History::new(self.layout.len, c.history_bytes);
             self.pending.clear();
             self.sent = None;
         }
-        let rows_changed = c.fft_size != old.fft_size
-            || c.sample_rate != old.sample_rate
+        let rows_changed = layout_changed
             || c.height != old.height
             || c.effective_range() != old.effective_range();
         if rows_changed {
-            self.rows = RowMap::build(c.effective_range(), c.height, c.sample_rate, c.fft_size);
+            self.rows = RowMap::build(c.effective_range(), c.height, &self.layout);
         }
         if rows_changed || c.labeling != old.labeling {
             render_label_strip(&self.rows, c.labeling, LABEL_WIDTH, &mut self.label_strip);
@@ -261,6 +284,12 @@ impl Engine {
             notes: self.pitches.iter().map(|p| p.label.clone()).collect(),
             ticks_per_second: self.config.ticks_per_second(),
             history_seconds: self.history.capacity() as f64 / self.config.ticks_per_second(),
+            bands: self
+                .layout
+                .segments
+                .iter()
+                .map(|s| (s.min_hz, s.max_hz, s.fft_size))
+                .collect(),
         }
     }
 
@@ -297,7 +326,7 @@ impl Engine {
 
     /// Forget all audio and recorded history.
     pub fn clear(&mut self) {
-        self.analyser.clear();
+        self.analysers.iter_mut().for_each(Analyser::clear);
         self.history.clear();
         self.pending.clear();
         self.sent = None;
@@ -310,12 +339,27 @@ impl Engine {
     /// Run analysis on all complete hops of pending audio. Returns how many
     /// ticks were recorded.
     pub fn process_pending(&mut self) -> usize {
-        let hop = hop(self.config.fft_size);
+        let hop = self.config.hop();
         let mut ticks = 0;
         let mut offset = 0;
         while offset + hop <= self.pending.len() {
-            self.analyser.push_mono(&self.pending[offset..offset + hop]);
-            self.history.push(self.analyser.byte_frequency_data());
+            let chunk = &self.pending[offset..offset + hop];
+            for a in &mut self.analysers {
+                a.push_mono(chunk);
+                a.byte_frequency_data();
+            }
+            let analysers = &self.analysers;
+            self.layout.compose(
+                |n| {
+                    analysers
+                        .iter()
+                        .find(|a| a.fft_size() == n)
+                        .expect("an analyser exists for every band")
+                        .bytes()
+                },
+                &mut self.composite,
+            );
+            self.history.push(&self.composite);
             offset += hop;
             ticks += 1;
         }
@@ -352,17 +396,20 @@ impl Engine {
                 for (i, v) in self.values.iter_mut().enumerate() {
                     *v = self.rows.value(i, spectrum);
                 }
-                let bin_hz = crate::mapping::bin_hz(self.config.sample_rate, self.config.fft_size);
                 // The preset (not the zoomed) range is used so zooming the
                 // display does not change what the pitch detector hears.
                 let detect = FreqRange::preset(self.config.scale, self.config.sample_rate);
-                spectral_peaks(
-                    spectrum,
-                    bin_hz,
-                    detect.min_hz,
-                    detect.max_hz,
-                    &mut self.peaks,
-                );
+                self.peaks.clear();
+                for seg in &self.layout.segments {
+                    spectral_peaks(
+                        &spectrum[seg.offset..seg.end()],
+                        seg.bin_hz,
+                        seg.first_bin as f64 * seg.bin_hz,
+                        detect.min_hz.max(seg.min_hz),
+                        detect.max_hz.min(seg.max_hz),
+                        &mut self.peaks,
+                    );
+                }
                 overtone_buckets(&self.peaks, &mut self.buckets);
                 detect_pitch(&self.pitches, &self.buckets)
             }
@@ -574,14 +621,17 @@ mod tests {
     fn live_view_advances_with_audio_time() {
         let mut e = Engine::new(EngineConfig::default()).unwrap();
         e.frame(live_view(200, 100.0));
-        // 94 hops (0.501 s) of tone: 100 px/s -> shift 50
-        e.push_mono(&sine(94 * hop(8192), 440.0, 48000.0, 0.05));
+        // just over half a second of tone: 100 px/s -> shift 50
+        let hop = e.config().hop();
+        let hops = 24000usize.div_ceil(hop);
+        e.push_mono(&sine(hops * hop, 440.0, 48000.0, 0.05));
         let p = parse(e.frame(live_view(200, 100.0)));
         assert_ne!(p.flags & FLAG_NEW_AUDIO, 0);
         assert_eq!(p.flags & FLAG_FULL, 0);
         assert_eq!(p.shift, 50);
         assert_eq!(p.column_start, 0);
         assert_eq!(p.columns, 50);
+        // spectrum + pitch on the multi-resolution default
         assert!((p.history_end - 0.5).abs() < 0.01);
         assert!((p.view_end - 0.5).abs() < 0.01);
         assert!(
@@ -693,14 +743,102 @@ mod tests {
         assert_eq!(e.history_span().1, 0.0);
         let info = e.info();
         assert_eq!(info.fft_size, 16384);
-        assert!((info.ticks_per_second - 93.75).abs() < 1e-9);
+        // shortest window is 16384 / 8 = 2048, hop = 256 samples
+        assert!((info.ticks_per_second - 187.5).abs() < 1e-9);
         assert!(info.history_seconds > 60.0);
+        assert_eq!(info.bands.len(), 4);
+        assert_eq!(info.bands[0], (0.0, 250.0, 16384));
+        assert_eq!(info.bands[3], (1000.0, 24000.0, 2048));
         assert!(e
             .configure(EngineConfig {
                 fft_size: 1000,
                 ..Default::default()
             })
             .is_err());
+    }
+
+    /// Feed a 20 ms burst at `hz` and count how many ticks it stays visible
+    /// in the row nearest `hz`.
+    fn burst_visible_ticks(e: &mut Engine, hz: f32) -> usize {
+        e.clear();
+        let sr = 48000.0;
+        let burst = sine((0.020 * sr) as usize, hz, sr, 0.1);
+        let mut signal = vec![0.0f32; 48000 * 3];
+        signal[48000..48000 + burst.len()].copy_from_slice(&burst);
+        e.push_mono(&signal);
+        e.process_pending();
+        let row = e.rows.hz.iter().position(|&h| h >= hz as f64).unwrap();
+        let mut levels = Vec::new();
+        for t in e.history.first()..e.history.total() {
+            levels.push(e.rows.value(row, e.history.get(t).unwrap()));
+        }
+        let peak = levels.iter().cloned().fold(0.0, f32::max);
+        levels.iter().filter(|&&l| l > peak * 0.5).count()
+    }
+
+    #[test]
+    fn short_windows_keep_treble_events_sharp() {
+        let mut multi = Engine::new(EngineConfig {
+            fft_size: 32768,
+            scale: Scale::Logarithmic,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut single = Engine::new(EngineConfig {
+            fft_size: 32768,
+            scale: Scale::Logarithmic,
+            bands: crate::spectrum::single_band(),
+            ..Default::default()
+        })
+        .unwrap();
+        let tps_multi = multi.config().ticks_per_second();
+        let tps_single = single.config().ticks_per_second();
+        let ms = |ticks: usize, tps: f64| ticks as f64 / tps * 1000.0;
+        // 3 kHz sits in the 4096-sample band: ~85 ms window vs ~683 ms
+        let m = ms(burst_visible_ticks(&mut multi, 3000.0), tps_multi);
+        let s = ms(burst_visible_ticks(&mut single, 3000.0), tps_single);
+        assert!(m < 120.0, "multi: {m} ms");
+        assert!(s > 300.0, "single: {s} ms");
+        // 100 Hz is still analysed with the full window in both
+        let m = ms(burst_visible_ticks(&mut multi, 100.0), tps_multi);
+        let s = ms(burst_visible_ticks(&mut single, 100.0), tps_single);
+        assert!((m - s).abs() < 60.0, "multi {m} ms vs single {s} ms");
+    }
+
+    #[test]
+    fn bands_scale_with_the_base_fft_size() {
+        let mut e = Engine::new(EngineConfig::default()).unwrap();
+        assert_eq!(e.info().bands[3].2, 1024);
+        let mut c = e.config().clone();
+        c.fft_size = 32768;
+        e.configure(c).unwrap();
+        let bands = e.info().bands;
+        assert_eq!(
+            bands.iter().map(|b| b.2).collect::<Vec<_>>(),
+            vec![32768, 16384, 8192, 4096]
+        );
+        let mut c = e.config().clone();
+        c.bands = vec![
+            Band {
+                max_hz: Some(500.0),
+                divisor: 1,
+            },
+            Band {
+                max_hz: None,
+                divisor: 16,
+            },
+        ];
+        e.configure(c).unwrap();
+        assert_eq!(
+            e.info().bands,
+            vec![(0.0, 500.0, 32768), (500.0, 24000.0, 2048)]
+        );
+        let mut c = e.config().clone();
+        c.bands = vec![Band {
+            max_hz: None,
+            divisor: 5,
+        }];
+        assert!(e.configure(c).is_err());
     }
 
     #[test]
@@ -710,5 +848,42 @@ mod tests {
             e.push_mono(&vec![0.0; 48000]);
         }
         assert!(e.pending.len() <= 48000 * 8);
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn tick_cost() {
+        for &fft in &[8192usize, 16384, 32768] {
+            for bands in [crate::spectrum::single_band(), default_bands()] {
+                let mut e = Engine::new(EngineConfig {
+                    fft_size: fft,
+                    bands: bands.clone(),
+                    ..Default::default()
+                })
+                .unwrap();
+                let samples: Vec<f32> = (0..48000 * 5)
+                    .map(|i| 0.1 * (i as f32 * 0.05).sin())
+                    .collect();
+                let t = std::time::Instant::now();
+                e.push_mono(&samples);
+                let ticks = e.process_pending();
+                let el = t.elapsed();
+                eprintln!(
+                    "fft {fft:>5} bands {} hop {:>4}: {ticks} ticks in {:?} = {:.1} µs/tick, {:.1}% of realtime, history {} B/tick, {:.0} s budget",
+                    bands.len(),
+                    e.config().hop(),
+                    el,
+                    el.as_secs_f64() * 1e6 / ticks as f64,
+                    el.as_secs_f64() / 5.0 * 100.0,
+                    e.layout.len,
+                    e.info().history_seconds
+                );
+            }
+        }
     }
 }

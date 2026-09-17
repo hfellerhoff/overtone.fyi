@@ -4,6 +4,7 @@ import ColoringMethodSelection from "./ColoringMethodSelection";
 import FrequencyLabelingMethodSelection from "./FrequencyLabelingMethodSelection";
 import AnalyzerScaleSelection from "./AnalyzerScaleSelection";
 import TimelineSpeedSelection from "./TimelineSpeedSelection";
+import BandsSelection from "./BandsSelection";
 
 export default function AnalysisInfo() {
   return (
@@ -13,6 +14,7 @@ export default function AnalysisInfo() {
       <FrequencyLabelingMethodSelection />
       <AnalyzerScaleSelection />
       <FFTSizeSelection />
+      <BandsSelection />
       <TimelineSpeedSelection />
     </div>
   );

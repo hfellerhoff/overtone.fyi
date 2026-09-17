@@ -21,6 +21,7 @@ pub mod labels;
 pub mod mapping;
 pub mod packet;
 pub mod pitch;
+pub mod spectrum;
 
 pub use analyser::Analyser;
 pub use color::Coloring;

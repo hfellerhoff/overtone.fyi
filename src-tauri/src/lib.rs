@@ -8,6 +8,7 @@ pub mod capture;
 use capture::{Capture, DeviceInfo};
 use overtone_core::engine::{EngineConfig, EngineInfo};
 use overtone_core::mapping::FreqRange;
+use overtone_core::spectrum::BandPreset;
 use overtone_core::{Coloring, Engine, Labeling, Scale, ViewRequest};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,12 @@ pub struct DisplayConfig {
     pub labeling: Labeling,
     #[serde(default)]
     pub range: Option<FreqRange>,
+    #[serde(default = "default_band_preset")]
+    pub bands: BandPreset,
+}
+
+fn default_band_preset() -> BandPreset {
+    BandPreset::Balanced
 }
 
 impl DisplayConfig {
@@ -40,6 +47,7 @@ impl DisplayConfig {
             labeling: self.labeling,
             range: self.range,
             history_bytes: overtone_core::engine::DEFAULT_HISTORY_BYTES,
+            bands: self.bands.bands(),
         }
     }
 }

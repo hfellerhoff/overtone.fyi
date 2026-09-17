@@ -60,11 +60,11 @@ pub struct Bucket {
 pub fn spectral_peaks(
     bytes: &[u8],
     bin_hz: f64,
+    hz_offset: f64,
     min_hz: f64,
     max_hz: f64,
     out: &mut Vec<(f64, f64)>,
 ) {
-    out.clear();
     if bytes.len() < 3 || bin_hz <= 0.0 {
         return;
     }
@@ -100,7 +100,7 @@ pub fn spectral_peaks(
         } else {
             (centre, bf)
         };
-        let hz = position * bin_hz;
+        let hz = hz_offset + position * bin_hz;
         if hz >= min_hz && hz <= max_hz {
             out.push((hz, height));
         }

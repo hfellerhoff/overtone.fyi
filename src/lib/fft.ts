@@ -2,15 +2,18 @@ import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 import type {
   AnalyzerScale,
+  BandPreset,
   ColoringMethod,
   FrequencyLabelMethod,
 } from "@/engine/types";
 
-export type { AnalyzerScale, ColoringMethod, FrequencyLabelMethod };
+export type { AnalyzerScale, BandPreset, ColoringMethod, FrequencyLabelMethod };
 
 export const isRecordingAtom = atom(true);
 
+/** Base window length. Each band uses a fixed fraction of it. */
 export const fftSizeAtom = atomWithStorage("fft-size", 8192);
+export const bandPresetAtom = atomWithStorage<BandPreset>("band-preset", "balanced");
 
 export const TIMESERIES_CANVAS_WIDTHS = {
   DESKTOP: 2048,
