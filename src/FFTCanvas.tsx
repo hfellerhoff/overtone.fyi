@@ -3,6 +3,7 @@ import { MicIcon, MicOffIcon, RadioIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import AnalysisInfo from "./components/AnalysisInfo";
 import FrequencyMarkers from "./components/FrequencyMarkers";
+import { toggleFullscreen } from "./engine/desktopWindow";
 import { useAnalysis } from "./engine/useAnalysis";
 import { panRange, zoomRange } from "./engine/viewport";
 import {
@@ -115,6 +116,12 @@ export default function FFTCanvas() {
         setIsRecording((prev) => !prev);
       } else if (ev.key === "Escape" || ev.key === "0") {
         resetView();
+      } else if (
+        ev.key === "F11" ||
+        ((ev.metaKey || ev.ctrlKey) && ev.shiftKey && ev.key.toLowerCase() === "f")
+      ) {
+        ev.preventDefault();
+        void toggleFullscreen();
       }
     };
     window.addEventListener("keydown", handleKeypress);
