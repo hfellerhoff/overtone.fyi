@@ -18,8 +18,9 @@
         "minWidth": 700,
         "minHeight": 500,
         "backgroundColor": "#171717",
-        "decorations": false,
-        "maximized": true
+        "maximized": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

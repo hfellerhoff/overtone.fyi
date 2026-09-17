@@ -3,6 +3,7 @@ import { MicIcon, MicOffIcon, RadioIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import AnalysisInfo from "./components/AnalysisInfo";
 import FrequencyMarkers from "./components/FrequencyMarkers";
+import { isTauri } from "./engine/backend";
 import { toggleFullscreen } from "./engine/desktopWindow";
 import { useAnalysis } from "./engine/useAnalysis";
 import { panRange, zoomRange } from "./engine/viewport";
@@ -15,8 +16,14 @@ import { useMediaQuery } from "./lib/utils";
 
 const TOP_BAR_HEIGHT = 128;
 const VERTICAL_PADDING = 20;
+/**
+ * On the desktop the OS title bar is a transparent overlay: only the
+ * traffic-light buttons remain, drawn over our content. Reserve a strip
+ * for them that also acts as the window's drag handle.
+ */
+const TITLE_BAR_INSET = isTauri() ? 28 : 0;
 const CANVAS_HEIGHT = `calc(var(--adjusted-height) - ${
-  TOP_BAR_HEIGHT + VERTICAL_PADDING
+  TOP_BAR_HEIGHT + VERTICAL_PADDING + TITLE_BAR_INSET
 }px)`;
 
 const LIVE_CANVAS_WIDTH = 272;
@@ -227,7 +234,15 @@ export default function FFTCanvas() {
         height: "var(--adjusted-height)",
       }}
     >
+      {TITLE_BAR_INSET > 0 && (
+        <div
+          data-tauri-drag-region
+          className="w-full"
+          style={{ height: TITLE_BAR_INSET }}
+        />
+      )}
       <div
+        data-tauri-drag-region
         className="flex items-center gap-2 pt-4 overflow-x-auto overflow-y-hidden"
         style={{
           height: TOP_BAR_HEIGHT,
