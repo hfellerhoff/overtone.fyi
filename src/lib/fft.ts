@@ -2,18 +2,15 @@ import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 import type {
   AnalyzerScale,
-  BandPreset,
   ColoringMethod,
   FrequencyLabelMethod,
 } from "@/engine/types";
 
-export type { AnalyzerScale, BandPreset, ColoringMethod, FrequencyLabelMethod };
+export type { AnalyzerScale, ColoringMethod, FrequencyLabelMethod };
 
 export const isRecordingAtom = atom(true);
 
-/** Base window length. Each band uses a fixed fraction of it. */
 export const fftSizeAtom = atomWithStorage("fft-size", 8192);
-export const bandPresetAtom = atomWithStorage<BandPreset>("band-preset", "balanced");
 
 export const TIMESERIES_CANVAS_WIDTHS = {
   DESKTOP: 2048,
@@ -45,9 +42,5 @@ export const analyzerScaleAtom = atomWithStorage<AnalyzerScale>(
   "piano",
 );
 
-/**
- * Timeline scroll speed multiplier. 1x scrolls 60 px/s, so the full-width
- * desktop timeline (2048 px) holds about 34 s of history; 2x holds ~17 s.
- */
-export const TIMELINE_BASE_PIXELS_PER_SECOND = 60;
-export const timelineSpeedAtom = atomWithStorage("timeline-speed", 2);
+/** Timeline scroll speed: the 2048 px desktop timeline holds about 17 s. */
+export const TIMELINE_PIXELS_PER_SECOND = 120;

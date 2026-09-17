@@ -39,7 +39,7 @@ export class WasmBackend implements AnalysisBackend {
       scale: "piano",
       coloring: "detailed",
       labeling: "piano",
-      bands: "balanced",
+      bands: "single",
     };
     const engine = new WasmEngine(JSON.stringify(engineConfig(config, SAMPLE_RATE)));
     return new WasmBackend(engine, config);

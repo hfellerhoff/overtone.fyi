@@ -10,19 +10,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scale {
-    /// Piano range: D1 (36.7 Hz) up to just below C#9 (9.4 kHz).
+    /// Piano range: 60 Hz up to just below C#9 (9.4 kHz).
     Piano,
-    /// Full audible range, 20 Hz to 20 kHz (or Nyquist if lower).
+    /// Full range above the piano floor: 60 Hz to 20 kHz (or Nyquist if lower).
     Logarithmic,
 }
 
-/// Number of piano notes spanned by the piano preset.
-pub const NOTES: f64 = 96.0;
-/// The piano-key number at the bottom of the piano preset.
-pub const BASE_NOTE: f64 = 6.0;
+/// Lowest frequency shown by either scale.
+pub const MIN_DISPLAY_HZ: f64 = 60.0;
+/// Highest piano key shown (one above C8 + an octave, i.e. just below C#9).
+pub const TOP_NOTE: f64 = 102.0;
 pub const REFERENCE_HZ: f64 = 440.0;
 pub const REFERENCE_NOTE_NUMBER: f64 = 49.0;
-pub const LOG_MIN_HZ: f64 = 20.0;
+pub const LOG_MIN_HZ: f64 = MIN_DISPLAY_HZ;
 pub const LOG_MAX_HZ: f64 = 20_000.0;
 /// Hard limits for zooming.
 pub const ABSOLUTE_MIN_HZ: f64 = 10.0;
@@ -59,10 +59,7 @@ impl FreqRange {
     pub fn preset(scale: Scale, sample_rate: f64) -> Self {
         let nyquist = sample_rate / 2.0;
         let (min, max) = match scale {
-            Scale::Piano => (
-                pitch_by_number(BASE_NOTE),
-                pitch_by_number(BASE_NOTE + NOTES),
-            ),
+            Scale::Piano => (MIN_DISPLAY_HZ, pitch_by_number(TOP_NOTE)),
             Scale::Logarithmic => (LOG_MIN_HZ, LOG_MAX_HZ),
         };
         Self::new(min, max.min(nyquist))
@@ -248,10 +245,10 @@ mod tests {
     #[test]
     fn presets_cover_the_expected_ranges() {
         let piano = FreqRange::preset(Scale::Piano, 48000.0);
-        assert!((piano.min_hz - 36.71).abs() < 0.01);
+        assert_eq!(piano.min_hz, 60.0);
         assert!((piano.max_hz - 9397.27).abs() < 0.01);
         let log = FreqRange::preset(Scale::Logarithmic, 48000.0);
-        assert_eq!(log, FreqRange::new(20.0, 20000.0));
+        assert_eq!(log, FreqRange::new(60.0, 20000.0));
         let log_low_rate = FreqRange::preset(Scale::Logarithmic, 16000.0);
         assert_eq!(log_low_rate.max_hz, 8000.0);
         assert!((pitch_by_number(49.0) - 440.0).abs() < 1e-9);
@@ -310,7 +307,7 @@ mod tests {
 
     #[test]
     fn multi_resolution_rows_read_their_bands_segment() {
-        let layout = Layout::build(48000.0, 32768, &crate::spectrum::default_bands());
+        let layout = Layout::build(48000.0, 32768, &crate::spectrum::balanced_bands());
         let map = RowMap::build(FreqRange::new(30.0, 20000.0), 800, &layout);
         fn span(b: &RowBins) -> (usize, usize) {
             match b {
@@ -357,7 +354,7 @@ mod tests {
 
     #[test]
     fn blended_rows_crossfade_between_bands() {
-        let layout = Layout::build(48000.0, 32768, &crate::spectrum::default_bands());
+        let layout = Layout::build(48000.0, 32768, &crate::spectrum::balanced_bands());
         // lower band reads 200 everywhere, upper band reads 100 everywhere
         let mut spectrum = vec![0u8; layout.len];
         for s in &layout.segments {

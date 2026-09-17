@@ -13,16 +13,12 @@ All audio analysis is written in Rust and shared between both targets:
 | `crates/overtone-wasm` | `wasm-bindgen` wrapper used by the website. |
 | `src-tauri` | Tauri desktop app: microphone capture with `cpal`, engine behind binary IPC. |
 
-The engine runs one FFT per frequency band, with a shorter window for each
-higher band (the "Bands" setting: Balanced halves the window every octave
-above 250 Hz, Sharp starts at 125 Hz and goes further, Single uses one
-window). Every band's window is a fixed fraction of the base "Resolution"
-size, so that setting scales them all together. Each tick (a quarter of the
-shortest window, at most 400 per second) the bands are stitched into one
-composite spectrum and recorded in a ring buffer (256 MB by default, about
-20 minutes at the default settings), independent of the display. Each band's
-FFT is only recomputed once a sixteenth of its window has arrived, and rows
-near a band boundary crossfade between the two bands.
+The engine analyses the signal with the window size chosen under
+"Resolution" and records each spectrum in a ring buffer (256 MB by default,
+about 20 minutes at the default settings), independent of the display. The
+engine also supports splitting the range into bands with shorter windows for
+the treble (`BandPreset::Balanced` and `Sharp` in
+`crates/overtone-core/src/spectrum.rs`); the apps use a single band.
 
 The raw audio is retained as well (64 MB, about six minutes). When an
 analysis setting changes (resolution, bands, sample rate) the newest few

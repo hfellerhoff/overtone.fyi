@@ -33,7 +33,7 @@ pub struct DisplayConfig {
 }
 
 fn default_band_preset() -> BandPreset {
-    BandPreset::Balanced
+    BandPreset::Single
 }
 
 impl DisplayConfig {

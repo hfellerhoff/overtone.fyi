@@ -2,14 +2,12 @@ import { useAtomValue } from "jotai";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   analyzerScaleAtom,
-  bandPresetAtom,
   canvasHeightAtom,
   coloringMethodAtom,
   fftSizeAtom,
   frequencyLabelMethodAtom,
   isRecordingAtom,
-  TIMELINE_BASE_PIXELS_PER_SECOND,
-  timelineSpeedAtom,
+  TIMELINE_PIXELS_PER_SECOND,
   timeseriesCanvasWidthAtom,
 } from "@/lib/fft";
 import { SpectrogramRenderer } from "@/render/renderer";
@@ -18,6 +16,9 @@ import { resetLiveValues, setLiveValues } from "./liveStore";
 import { FLAG_LIVE } from "./packet";
 import type { DisplayConfig, EngineInfo, FreqRange } from "./types";
 import type { Viewport } from "./viewport";
+
+/** Minimum interval between engine reconfigurations while zooming. */
+const RANGE_THROTTLE_MS = 60;
 
 export interface AnalysisHandle {
   renderer: SpectrogramRenderer;
@@ -52,28 +53,45 @@ export function useAnalysis(): AnalysisHandle {
 
   const isRecording = useAtomValue(isRecordingAtom);
   const fftSize = useAtomValue(fftSizeAtom);
-  const bands = useAtomValue(bandPresetAtom);
   const height = useAtomValue(canvasHeightAtom);
   const width = useAtomValue(timeseriesCanvasWidthAtom);
   const scale = useAtomValue(analyzerScaleAtom);
   const coloring = useAtomValue(coloringMethodAtom);
   const labeling = useAtomValue(frequencyLabelMethodAtom);
-  const timelineSpeed = useAtomValue(timelineSpeedAtom);
 
   // The viewport changes on every wheel event; keep it in a ref that the
   // frame loop reads, and mirror the frequency range into state so the
-  // engine gets reconfigured (and the labels redrawn).
+  // engine gets reconfigured (and the labels and history redrawn). Range
+  // updates are throttled so a fast zoom gesture redraws steadily instead
+  // of once per wheel event.
   const viewportRef = useRef<Viewport>({ range: null, viewEnd: null });
   const [range, setRange] = useState<FreqRange | null>(null);
-  const setViewport = useCallback((update: (v: Viewport) => Viewport) => {
-    const next = update(viewportRef.current);
-    viewportRef.current = next;
+  const rangeTimer = useRef<number | null>(null);
+  const applyRange = useCallback(() => {
+    rangeTimer.current = null;
+    const next = viewportRef.current.range;
     setRange((prev) =>
-      prev?.minHz === next.range?.minHz && prev?.maxHz === next.range?.maxHz
-        ? prev
-        : next.range,
+      prev?.minHz === next?.minHz && prev?.maxHz === next?.maxHz ? prev : next,
     );
   }, []);
+  const setViewport = useCallback(
+    (update: (v: Viewport) => Viewport) => {
+      viewportRef.current = update(viewportRef.current);
+      if (rangeTimer.current === null) {
+        // leading edge applies at once; later changes coalesce into one
+        // trailing update
+        applyRange();
+        rangeTimer.current = window.setTimeout(applyRange, RANGE_THROTTLE_MS);
+      }
+    },
+    [applyRange],
+  );
+  useEffect(
+    () => () => {
+      if (rangeTimer.current !== null) window.clearTimeout(rangeTimer.current);
+    },
+    [],
+  );
 
   // Changing scale resets any zoom.
   const previousScale = useRef(scale);
@@ -116,7 +134,7 @@ export function useAnalysis(): AnalysisHandle {
       coloring,
       labeling,
       range,
-      bands,
+      bands: "single",
     };
     configRef.current = config;
     (async () => {
@@ -134,7 +152,7 @@ export function useAnalysis(): AnalysisHandle {
     return () => {
       cancelled = true;
     };
-  }, [backend, fftSize, bands, height, scale, coloring, labeling, range, renderer]);
+  }, [backend, fftSize, height, scale, coloring, labeling, range, renderer]);
 
   // Capture + frame loop.
   useEffect(() => {
@@ -147,7 +165,7 @@ export function useAnalysis(): AnalysisHandle {
       try {
         const bytes = await backend.frame({
           width,
-          pxPerSecond: TIMELINE_BASE_PIXELS_PER_SECOND * timelineSpeed,
+          pxPerSecond: TIMELINE_PIXELS_PER_SECOND,
           viewEnd: viewportRef.current.viewEnd,
         });
         if (cancelled) return;
@@ -196,7 +214,7 @@ export function useAnalysis(): AnalysisHandle {
       backend.stop().catch(() => undefined);
       resetLiveValues();
     };
-  }, [backend, isRecording, renderer, width, timelineSpeed]);
+  }, [backend, isRecording, renderer, width]);
 
   return {
     renderer,

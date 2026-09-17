@@ -28,8 +28,8 @@ pub struct Band {
     pub divisor: usize,
 }
 
-/// The default layout: halve the window every octave above 250 Hz.
-pub fn default_bands() -> Vec<Band> {
+/// Halve the window every octave above 250 Hz.
+pub fn balanced_bands() -> Vec<Band> {
     vec![
         Band {
             max_hz: Some(250.0),
@@ -75,7 +75,7 @@ impl BandPreset {
     pub fn bands(self) -> Vec<Band> {
         match self {
             BandPreset::Single => single_band(),
-            BandPreset::Balanced => default_bands(),
+            BandPreset::Balanced => balanced_bands(),
             BandPreset::Sharp => vec![
                 Band {
                     max_hz: Some(125.0),
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn default_layout_halves_the_window_per_octave() {
-        let l = Layout::build(48000.0, 32768, &default_bands());
+        let l = Layout::build(48000.0, 32768, &balanced_bands());
         assert_eq!(l.fft_sizes(), vec![32768, 16384, 8192, 4096]);
         assert_eq!(l.segments.len(), 4);
         assert_eq!(l.segments[0].min_hz, 0.0);
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn blend_zone_surrounds_each_boundary() {
-        let l = Layout::build(48000.0, 32768, &default_bands());
+        let l = Layout::build(48000.0, 32768, &balanced_bands());
         assert!(l.blend_at(200.0).is_none());
         assert!(l.blend_at(320.0).is_none());
         let (lo, hi, t) = l.blend_at(250.0).unwrap();
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn positions_map_frequencies_into_the_composite() {
-        let l = Layout::build(48000.0, 32768, &default_bands());
+        let l = Layout::build(48000.0, 32768, &balanced_bands());
         let s = l.segment_for(300.0).unwrap();
         let p = s.position(300.0);
         assert!(p >= s.offset as f64 && p < s.end() as f64);
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_bad_bands() {
-        assert!(validate_bands(&default_bands(), 8192).is_ok());
+        assert!(validate_bands(&balanced_bands(), 8192).is_ok());
         assert!(validate_bands(&[], 8192).is_err());
         assert!(validate_bands(
             &[Band {
@@ -405,7 +405,7 @@ mod tests {
         )
         .is_err());
         // bands above Nyquist are dropped rather than rejected
-        let l = Layout::build(8000.0, 1024, &default_bands());
+        let l = Layout::build(8000.0, 1024, &balanced_bands());
         assert_eq!(l.segments.len(), 4);
         assert_eq!(l.segments[3].max_hz, 4000.0);
     }

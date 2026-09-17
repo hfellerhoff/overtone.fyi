@@ -17,7 +17,7 @@ use crate::packet::{self, Header, FLAG_FULL, FLAG_LIVE, FLAG_NEW_AUDIO};
 use crate::pitch::{
     detect_pitch, overtone_buckets, pitch_table, spectral_peaks, Bucket, Pitch, PitchResult,
 };
-use crate::spectrum::{default_bands, validate_bands, Band, Layout};
+use crate::spectrum::{single_band, validate_bands, Band, Layout};
 use serde::{Deserialize, Serialize};
 
 /// Width of the frequency label strip in pixels.
@@ -76,8 +76,8 @@ pub struct EngineConfig {
     #[serde(default = "default_audio_bytes")]
     pub audio_bytes: usize,
     /// Frequency bands and the window length used for each, as a divisor of
-    /// `fft_size`. Defaults to halving the window per octave above 250 Hz.
-    #[serde(default = "default_bands")]
+    /// `fft_size`. Defaults to a single band using the full window.
+    #[serde(default = "single_band")]
     pub bands: Vec<Band>,
 }
 
@@ -138,7 +138,7 @@ impl Default for EngineConfig {
             range: None,
             history_bytes: DEFAULT_HISTORY_BYTES,
             audio_bytes: DEFAULT_AUDIO_BYTES,
-            bands: default_bands(),
+            bands: single_band(),
         }
     }
 }
@@ -971,7 +971,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(e.info().range, FreqRange::new(20.0, 20000.0));
+        assert_eq!(e.info().range, FreqRange::new(60.0, 20000.0));
     }
 
     #[test]
@@ -1057,13 +1057,13 @@ mod tests {
         let mut multi = Engine::new(EngineConfig {
             fft_size: 32768,
             scale: Scale::Logarithmic,
+            bands: crate::spectrum::balanced_bands(),
             ..Default::default()
         })
         .unwrap();
         let mut single = Engine::new(EngineConfig {
             fft_size: 32768,
             scale: Scale::Logarithmic,
-            bands: crate::spectrum::single_band(),
             ..Default::default()
         })
         .unwrap();
@@ -1083,7 +1083,11 @@ mod tests {
 
     #[test]
     fn bands_scale_with_the_base_fft_size() {
-        let mut e = Engine::new(EngineConfig::default()).unwrap();
+        let mut e = Engine::new(EngineConfig {
+            bands: crate::spectrum::balanced_bands(),
+            ..Default::default()
+        })
+        .unwrap();
         assert_eq!(e.info().bands[3].2, 1024);
         let mut c = e.config().clone();
         c.fft_size = 32768;
@@ -1227,7 +1231,7 @@ mod tests {
         e.push_mono(&sine(48000 * 2, 440.0, 48000.0, 0.05));
         e.frame(live_view(100, 60.0));
         let mut c = e.config().clone();
-        c.bands = crate::spectrum::BandPreset::Single.bands();
+        c.fft_size = 16384;
         e.configure(c).unwrap();
         let (start, end) = e.history_span();
         assert!((end - 2.0).abs() < 0.02, "end {end}");
@@ -1262,7 +1266,10 @@ mod bench {
     #[ignore]
     fn tick_cost() {
         for &fft in &[8192usize, 16384, 32768] {
-            for bands in [crate::spectrum::single_band(), default_bands()] {
+            for bands in [
+                crate::spectrum::single_band(),
+                crate::spectrum::balanced_bands(),
+            ] {
                 let mut e = Engine::new(EngineConfig {
                     fft_size: fft,
                     bands: bands.clone(),

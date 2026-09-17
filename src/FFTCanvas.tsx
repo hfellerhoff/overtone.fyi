@@ -8,9 +8,8 @@ import { panRange, zoomRange } from "./engine/viewport";
 import {
   canvasHeightAtom,
   isRecordingAtom,
-  TIMELINE_BASE_PIXELS_PER_SECOND,
+  TIMELINE_PIXELS_PER_SECOND,
   TIMESERIES_CANVAS_WIDTHS,
-  timelineSpeedAtom,
   timeseriesCanvasWidthAtom,
 } from "./lib/fft";
 import { useMediaQuery } from "./lib/utils";
@@ -67,7 +66,7 @@ export default function FFTCanvas() {
       if (horizontal) {
         // Positive deltaX (scroll right / swipe left) moves forward in time.
         const canvasPxPerScreenPx = timeseriesCanvasWidth / rect.width;
-        const pxPerSecond = TIMELINE_BASE_PIXELS_PER_SECOND * timelineSpeedRef.current;
+        const pxPerSecond = TIMELINE_PIXELS_PER_SECOND;
         const seconds = (pixels * canvasPxPerScreenPx) / pxPerSecond;
         setViewport((v) => {
           const end = v.viewEnd ?? historyEndRef.current;
@@ -89,9 +88,6 @@ export default function FFTCanvas() {
     [setViewport, timeseriesCanvasWidth, historyEndRef],
   );
 
-  const timelineSpeed = useAtomValue(timelineSpeedAtom);
-  const timelineSpeedRef = useRef(timelineSpeed);
-  timelineSpeedRef.current = timelineSpeed;
 
   const mainRef = useRef<HTMLElement | null>(null);
   useEffect(() => {

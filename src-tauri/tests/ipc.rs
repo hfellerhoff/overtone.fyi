@@ -50,7 +50,7 @@ fn commands_return_binary_frames() {
     assert_eq!(info["fftSize"], 16384);
     assert_eq!(info["labelWidth"], 64);
     assert!(info["markers"].as_array().unwrap().len() > 10);
-    assert_eq!(info["range"]["minHz"].as_f64().unwrap().round(), 37.0);
+    assert_eq!(info["range"]["minHz"].as_f64().unwrap(), 60.0);
 
     let strip = get_ipc_response(&webview, request("label_strip", serde_json::json!({}))).unwrap();
     match strip {
