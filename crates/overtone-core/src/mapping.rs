@@ -24,8 +24,10 @@ pub const REFERENCE_HZ: f64 = 440.0;
 pub const REFERENCE_NOTE_NUMBER: f64 = 49.0;
 pub const LOG_MIN_HZ: f64 = MIN_DISPLAY_HZ;
 pub const LOG_MAX_HZ: f64 = 20_000.0;
-/// Hard limits for zooming.
-pub const ABSOLUTE_MIN_HZ: f64 = 10.0;
+/// Hard limits for zooming and panning: nothing below the display floor or
+/// above 20 kHz is ever shown.
+pub const ABSOLUTE_MIN_HZ: f64 = MIN_DISPLAY_HZ;
+pub const ABSOLUTE_MAX_HZ: f64 = LOG_MAX_HZ;
 /// Smallest visible span, as a ratio max/min (a major third).
 pub const MIN_SPAN_RATIO: f64 = 1.26;
 
@@ -67,7 +69,7 @@ impl FreqRange {
 
     /// Clamp to the hard limits, keeping the span at least [`MIN_SPAN_RATIO`].
     pub fn clamped(self, sample_rate: f64) -> Self {
-        let nyquist = sample_rate / 2.0;
+        let nyquist = (sample_rate / 2.0).min(ABSOLUTE_MAX_HZ);
         let mut min = if self.min_hz.is_finite() {
             self.min_hz
         } else {
@@ -267,7 +269,9 @@ mod tests {
     #[test]
     fn clamping_respects_limits() {
         let r = FreqRange::new(1.0, 1e9).clamped(48000.0);
-        assert_eq!(r, FreqRange::new(ABSOLUTE_MIN_HZ, 24000.0));
+        assert_eq!(r, FreqRange::new(60.0, 20000.0));
+        let r = FreqRange::new(1.0, 1e9).clamped(16000.0);
+        assert_eq!(r, FreqRange::new(60.0, 8000.0));
         let r = FreqRange::new(440.0, 441.0).clamped(48000.0);
         assert!((r.max_hz / r.min_hz - MIN_SPAN_RATIO).abs() < 1e-9);
         assert!(r.min_hz < 440.0 && r.max_hz > 441.0);

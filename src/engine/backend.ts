@@ -15,6 +15,8 @@ export interface AnalysisBackend {
   labelStrip(): Promise<Uint8Array>;
   /** Next frame packet for `view`, or null when a frame is still in flight. */
   frame(view: ViewRequest): Promise<Uint8Array | null>;
+  /** Forget all recorded audio and analysis. */
+  clear(): Promise<void>;
   /** Release the microphone and free the engine. */
   dispose(): Promise<void>;
 }

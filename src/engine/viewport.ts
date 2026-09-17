@@ -13,10 +13,12 @@ export interface Viewport {
 }
 
 /** Hard limits, mirrored from crates/overtone-core/src/mapping.rs. */
-export const ABSOLUTE_MIN_HZ = 10;
+export const ABSOLUTE_MIN_HZ = 60;
+export const ABSOLUTE_MAX_HZ = 20000;
 export const MIN_SPAN_RATIO = 1.26;
 
-export function clampRange(range: FreqRange, nyquist: number): FreqRange {
+export function clampRange(range: FreqRange, nyquistIn: number): FreqRange {
+  const nyquist = Math.min(nyquistIn, ABSOLUTE_MAX_HZ);
   let minHz = Math.max(ABSOLUTE_MIN_HZ, range.minHz);
   let maxHz = Math.min(nyquist, range.maxHz);
   if (maxHz / minHz < MIN_SPAN_RATIO) {
@@ -45,6 +47,7 @@ export function zoomRange(
   factor: number,
   nyquist: number,
 ): FreqRange {
+  // zooming out past the bounds just stops at them
   const logMin = Math.log(range.minHz);
   const logMax = Math.log(range.maxHz);
   const span = logMax - logMin;
@@ -60,7 +63,8 @@ export function zoomRange(
 }
 
 /** Pan a log-frequency range by a fraction of its height (positive = up). */
-export function panRange(range: FreqRange, fraction: number, nyquist: number): FreqRange {
+export function panRange(range: FreqRange, fraction: number, nyquistIn: number): FreqRange {
+  const nyquist = Math.min(nyquistIn, ABSOLUTE_MAX_HZ);
   const span = Math.log(range.maxHz / range.minHz);
   let shift = span * fraction;
   // do not pan past the limits; keep the span intact

@@ -12,12 +12,12 @@ export const isRecordingAtom = atom(true);
 
 export const fftSizeAtom = atomWithStorage("fft-size", 8192);
 
-export const TIMESERIES_CANVAS_WIDTHS = {
-  DESKTOP: 2048,
-  MOBILE: 768,
-};
-
-export const timeseriesCanvasWidthAtom = atom(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
+/**
+ * Timeline canvas width in pixels. Set from the container's measured size
+ * (times the device pixel ratio) so one second always occupies the same
+ * screen distance, and wider screens show more time.
+ */
+export const timeseriesCanvasWidthAtom = atom(2048);
 
 /**
  * Number of analysis rows. The original derived this from the FFT size and a
@@ -42,5 +42,5 @@ export const analyzerScaleAtom = atomWithStorage<AnalyzerScale>(
   "piano",
 );
 
-/** Timeline scroll speed: the 2048 px desktop timeline holds about 17 s. */
-export const TIMELINE_PIXELS_PER_SECOND = 120;
+/** Timeline scroll speed in CSS pixels per second of audio. */
+export const TIMELINE_SCREEN_PIXELS_PER_SECOND = 60;

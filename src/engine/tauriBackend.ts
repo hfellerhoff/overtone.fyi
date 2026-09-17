@@ -41,6 +41,10 @@ export class TauriBackend implements AnalysisBackend {
     }
   }
 
+  async clear(): Promise<void> {
+    await invoke("clear");
+  }
+
   async dispose(): Promise<void> {
     await this.stop();
   }

@@ -7,7 +7,7 @@ import {
   fftSizeAtom,
   frequencyLabelMethodAtom,
   isRecordingAtom,
-  TIMELINE_PIXELS_PER_SECOND,
+  TIMELINE_SCREEN_PIXELS_PER_SECOND,
   timeseriesCanvasWidthAtom,
 } from "@/lib/fft";
 import { SpectrogramRenderer } from "@/render/renderer";
@@ -32,6 +32,10 @@ export interface AnalysisHandle {
   isLive: boolean;
   /** Newest recorded time in seconds, updated every frame. */
   historyEndRef: React.MutableRefObject<number>;
+  /** Canvas pixels per second of audio on the timeline. */
+  pxPerSecond: number;
+  /** Forget everything recorded so far. */
+  clear(): Promise<void>;
 }
 
 /**
@@ -55,6 +59,8 @@ export function useAnalysis(): AnalysisHandle {
   const fftSize = useAtomValue(fftSizeAtom);
   const height = useAtomValue(canvasHeightAtom);
   const width = useAtomValue(timeseriesCanvasWidthAtom);
+  const pxPerSecond =
+    TIMELINE_SCREEN_PIXELS_PER_SECOND * (window.devicePixelRatio || 1);
   const scale = useAtomValue(analyzerScaleAtom);
   const coloring = useAtomValue(coloringMethodAtom);
   const labeling = useAtomValue(frequencyLabelMethodAtom);
@@ -165,7 +171,7 @@ export function useAnalysis(): AnalysisHandle {
       try {
         const bytes = await backend.frame({
           width,
-          pxPerSecond: TIMELINE_PIXELS_PER_SECOND,
+          pxPerSecond,
           viewEnd: viewportRef.current.viewEnd,
         });
         if (cancelled) return;
@@ -211,10 +217,20 @@ export function useAnalysis(): AnalysisHandle {
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      // Stops capture only; the recording and the canvas stay as they are.
       backend.stop().catch(() => undefined);
       resetLiveValues();
     };
-  }, [backend, isRecording, renderer, width]);
+  }, [backend, isRecording, renderer, width, pxPerSecond]);
+
+  const clear = useCallback(async () => {
+    if (!backend) return;
+    await backend.clear();
+    viewportRef.current = { ...viewportRef.current, viewEnd: null };
+    historyEndRef.current = 0;
+    renderer.clearHistory();
+    resetLiveValues();
+  }, [backend, renderer]);
 
   return {
     renderer,
@@ -225,5 +241,7 @@ export function useAnalysis(): AnalysisHandle {
     setViewport,
     isLive,
     historyEndRef,
+    pxPerSecond,
+    clear,
   };
 }

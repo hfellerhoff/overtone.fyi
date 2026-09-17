@@ -27,7 +27,8 @@ following frames, so the display carries over instead of being cleared.
 The canvas is only ever a rendering of the recorded analysis. The React frontend (`src/`)
 never touches audio data. Each animation frame it asks the active backend
 (`src/engine/`) for the view it wants (timeline width, pixels per second,
-and where in time the newest edge sits) and blits the returned packet onto
+and where in time the newest edge sits; one second of audio is always 60
+CSS pixels, so wider screens show more time) and blits the returned packet onto
 the canvases (`src/render/renderer.ts`). The engine sends only the columns
 that changed, or a full redraw after a zoom.
 
@@ -35,7 +36,9 @@ that changed, or a full redraw after a zoom.
 
 | Input | Action |
 |-------|--------|
-| Space | Start / stop capture |
+| Space | Start / stop capture (the recording is kept) |
+| Clear tile | Forget the recording |
+| Click and drag on the spectrogram | Pan the frequency range (vertical) and scroll through time (horizontal) |
 | Wheel or pinch over the spectrogram | Zoom the frequency range around the cursor |
 | Shift + wheel, or horizontal wheel / swipe | Scroll backward and forward in time |
 | Alt + wheel | Pan the frequency range |

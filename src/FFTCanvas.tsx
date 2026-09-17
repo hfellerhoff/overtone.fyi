@@ -1,6 +1,6 @@
 import { useAtom, useAtomValue } from "jotai";
-import { MicIcon, MicOffIcon, RadioIcon } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { MicIcon, MicOffIcon, RadioIcon, Trash2Icon } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import AnalysisInfo from "./components/AnalysisInfo";
 import FrequencyMarkers from "./components/FrequencyMarkers";
 import { toggleFullscreen } from "./engine/desktopWindow";
@@ -9,8 +9,6 @@ import { panRange, zoomRange } from "./engine/viewport";
 import {
   canvasHeightAtom,
   isRecordingAtom,
-  TIMELINE_PIXELS_PER_SECOND,
-  TIMESERIES_CANVAS_WIDTHS,
   timeseriesCanvasWidthAtom,
 } from "./lib/fft";
 import { useMediaQuery } from "./lib/utils";
@@ -35,10 +33,39 @@ export default function FFTCanvas() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const frequencyLabelCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const { renderer, info, error, setViewport, isLive, historyEndRef } =
-    useAnalysis();
+  const {
+    renderer,
+    info,
+    error,
+    setViewport,
+    isLive,
+    historyEndRef,
+    pxPerSecond,
+    clear,
+  } = useAnalysis();
   const infoRef = useRef(info);
   infoRef.current = info;
+
+  // Size the timeline canvas to its container (in device pixels) so a
+  // second of audio is always the same screen distance.
+  const timelineContainerRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const el = timelineContainerRef.current;
+    if (!el) return;
+    const measure = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const next = Math.max(64, Math.round(el.clientWidth * dpr));
+      setTimeseriesCanvasWidth((prev) => (prev === next ? prev : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [setTimeseriesCanvasWidth]);
 
   /**
    * Wheel on the spectrogram:
@@ -67,7 +94,6 @@ export default function FFTCanvas() {
       if (horizontal) {
         // Positive deltaX (scroll right / swipe left) moves forward in time.
         const canvasPxPerScreenPx = timeseriesCanvasWidth / rect.width;
-        const pxPerSecond = TIMELINE_PIXELS_PER_SECOND;
         const seconds = (pixels * canvasPxPerScreenPx) / pxPerSecond;
         setViewport((v) => {
           const end = v.viewEnd ?? historyEndRef.current;
@@ -86,8 +112,63 @@ export default function FFTCanvas() {
         return { ...v, range: zoomRange(range, anchor, factor, nyquist) };
       });
     },
-    [setViewport, timeseriesCanvasWidth, historyEndRef],
+    [setViewport, timeseriesCanvasWidth, historyEndRef, pxPerSecond],
   );
+
+  /**
+   * Click and drag on the spectrogram: vertical movement pans the frequency
+   * range, horizontal movement scrolls through time. The point under the
+   * cursor follows the cursor.
+   */
+  const drag = useRef<{
+    id: number;
+    x: number;
+    y: number;
+    moved: boolean;
+  } | null>(null);
+  const handlePointerDown = useCallback((ev: React.PointerEvent<HTMLElement>) => {
+    if (ev.button !== 0) return;
+    drag.current = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, moved: false };
+    ev.currentTarget.setPointerCapture(ev.pointerId);
+  }, []);
+  const handlePointerMove = useCallback(
+    (ev: React.PointerEvent<HTMLElement>) => {
+      const d = drag.current;
+      const current = infoRef.current;
+      if (!d || d.id !== ev.pointerId || !current) return;
+      const dx = ev.clientX - d.x;
+      const dy = ev.clientY - d.y;
+      if (!d.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+      d.moved = true;
+      d.x = ev.clientX;
+      d.y = ev.clientY;
+      const rect = ev.currentTarget.getBoundingClientRect();
+      const nyquist = current.sampleRate / 2;
+      const canvasPxPerScreenPx = timeseriesCanvasWidth / rect.width;
+      const seconds = (dx * canvasPxPerScreenPx) / pxPerSecond;
+      setViewport((v) => {
+        const range = v.range ?? current.range;
+        const next = { ...v };
+        if (dy !== 0) {
+          // dragging down moves the content down, i.e. shows higher frequencies
+          next.range = panRange(range, dy / rect.height, nyquist);
+        }
+        if (dx !== 0) {
+          // dragging right moves the content right, i.e. shows earlier time
+          const end = v.viewEnd ?? historyEndRef.current;
+          next.viewEnd = end - seconds;
+        }
+        return next;
+      });
+    },
+    [setViewport, timeseriesCanvasWidth, historyEndRef, pxPerSecond],
+  );
+  const handlePointerUp = useCallback((ev: React.PointerEvent<HTMLElement>) => {
+    if (drag.current?.id === ev.pointerId) {
+      drag.current = null;
+      ev.currentTarget.releasePointerCapture(ev.pointerId);
+    }
+  }, []);
 
 
   const mainRef = useRef<HTMLElement | null>(null);
@@ -131,20 +212,6 @@ export default function FFTCanvas() {
   const isTablet = useMediaQuery("(max-width: 800px)");
   const isMobile = useMediaQuery("(max-width: 600px)");
 
-  const [hasMounted, setHasMounted] = useState(false);
-  useEffect(() => {
-    if (!hasMounted) {
-      setHasMounted(true);
-      return;
-    }
-    if (isMobile && timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.DESKTOP) {
-      setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.MOBILE);
-    }
-    if (!isMobile && timeseriesCanvasWidth === TIMESERIES_CANVAS_WIDTHS.MOBILE) {
-      setTimeseriesCanvasWidth(TIMESERIES_CANVAS_WIDTHS.DESKTOP);
-    }
-  }, [hasMounted, isMobile, setTimeseriesCanvasWidth, timeseriesCanvasWidth]);
-
   let liveCanvasWidthPx = LIVE_CANVAS_WIDTH * 2;
   if (isMobile) {
     liveCanvasWidthPx = LIVE_CANVAS_WIDTH;
@@ -179,6 +246,15 @@ export default function FFTCanvas() {
             </span>
           )}
         </button>
+        <button
+          className="grid h-full border rounded-md shadow-sm place-items-center aspect-square border-input bg-background hover:bg-accent hover:text-accent-foreground"
+          onClick={() => void clear()}
+          title="Clear the recording"
+        >
+          <span className="flex flex-col items-center gap-1">
+            <Trash2Icon size={16} /> Clear
+          </span>
+        </button>
         <AnalysisInfo />
       </div>
       {error && (
@@ -188,10 +264,14 @@ export default function FFTCanvas() {
       )}
       <main
         ref={mainRef}
-        className="relative flex gap-2 pt-2 overflow-hidden rounded-lg"
+        className="relative flex gap-2 pt-2 overflow-hidden rounded-lg select-none touch-none cursor-grab active:cursor-grabbing"
         style={{
           height: CANVAS_HEIGHT,
         }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
       >
         <div
           className="relative h-full overflow-hidden"
@@ -219,7 +299,10 @@ export default function FFTCanvas() {
             height={canvasHeight}
           />
         </div>
-        <div className="relative w-full h-full overflow-hidden">
+        <div
+          ref={timelineContainerRef}
+          className="relative w-full h-full overflow-hidden"
+        >
           <FrequencyMarkers markers={info?.markers ?? []} />
           {!isLive && (
             <button

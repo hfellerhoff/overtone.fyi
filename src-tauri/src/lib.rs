@@ -125,10 +125,15 @@ fn start_capture(
             config.sample_rate = new.sample_rate() as f64;
             engine.configure(config)?;
         }
-        engine.clear();
     }
     *capture = Some(new);
     Ok(state.status(&capture))
+}
+
+/// Forget all recorded audio and analysis.
+#[tauri::command(async)]
+fn clear(state: State<'_, AppState>) {
+    state.engine.lock().clear();
 }
 
 #[tauri::command(async)]
@@ -209,6 +214,7 @@ pub fn build_app<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             list_input_devices,
             start_capture,
             stop_capture,
+            clear,
             capture_status,
             configure,
             engine_info,

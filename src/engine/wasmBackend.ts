@@ -94,7 +94,6 @@ export class WasmBackend implements AnalysisBackend {
         JSON.stringify(engineConfig(this.config, audioContext.sampleRate)),
       );
     }
-    this.engine.clear();
     return this.status();
   }
 
@@ -125,6 +124,11 @@ export class WasmBackend implements AnalysisBackend {
     for (const chunk of this.pending) this.engine.push_samples(chunk);
     this.pending.length = 0;
     return this.engine.frame(JSON.stringify(view));
+  }
+
+  async clear(): Promise<void> {
+    this.pending.length = 0;
+    this.engine.clear();
   }
 
   async dispose(): Promise<void> {
